@@ -1,0 +1,128 @@
+Exp:
+  out_dir: "output/TRIBRANCH/resc_ae_ens3/"
+  gpu: 0
+  gpu_ids: [0]
+
+Ensemble:
+  target_count: 3
+  base_seed: 3407
+  real_score_topk_ratio: 0.01
+
+Model:
+  network: "AE"
+  mp: 1
+  ls: 16
+  mem_dim: Null
+  shrink_thres: Null
+
+Data:
+  dataset: "resc"
+  img_size: 128
+  clip_img_size: 336
+  extra_data: 2500
+  ar: 0.1736
+  val_ratio: 0.1
+  val_seed: 0
+  workers: 12
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  cache_images: true
+  synthetic_mode_probs:
+    copy_paste: 0.4
+    intensity_shift: 0.2
+    blur_or_sharpen: 0.2
+  synthetic_shape_probs:
+    rectangle: 0.15
+    ellipse: 0.25
+    blob: 0.25
+    multi_blob: 0.20
+    streak: 0.15
+
+Solver:
+  bs: 32
+  lr: 5.0e-4
+  weight_decay: 0
+  num_epoch: 250
+
+RefineSolver:
+  bs: 8
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  num_epoch: 100
+  grad_clip: Null
+
+Diffusion:
+  bs: 64
+  val_bs: 16
+  lr: 1.0e-4
+  weight_decay: 0.0
+  num_epoch: 80
+  base_channels: 64
+  time_dim: 128
+  num_steps: 1000
+  beta_start: 1.0e-4
+  beta_end: 2.0e-2
+  t_recon: 200
+  ddim_steps: 50
+  workers: 8
+  persistent_workers: true
+  prefetch_factor: 2
+  cache_images: true
+  amp: true
+
+CLIP:
+  bs: 4
+  val_bs: 4
+  workers: 4
+  val_workers: 2
+  persistent_workers: true
+  val_persistent_workers: false
+  prefetch_factor: 2
+  val_prefetch_factor: 2
+  cache_images: true
+  cache_clip_images: false
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  num_epoch: 30
+  backbone_name: "ViT-L-14-336"
+  pretrained: "openai"
+  feature_layers: [6, 12, 18, 24]
+  seg_adapter_dim: 512
+  det_adapter_dim: 512
+  prompt_ensemble: "resc_oct"
+  prompt_token_count: 4
+  synthetic_probability: 0.5
+  image_loss_weight: 1.0
+  dice_loss_weight: 0.5
+  amp: true
+
+Fusion:
+  bs: 16
+  val_bs: 8
+  cache_bs: 8
+  cache_eval_bs: 4
+  lr: 3.0e-5
+  weight_decay: 1.0e-4
+  num_epoch: 30
+  base_channels: 32
+  in_channels: 9
+  synthetic_probability: 0.5
+  image_loss_weight: 0.3
+  dice_loss_weight: 0.5
+  iou_loss_weight: 0.25
+  amp: true
+  grad_clip: 1.0
+  use_cached_features: true
+  cache_seed: 3407
+  cache_loader_workers: 8
+  cache_loader_persistent_workers: true
+  cache_loader_prefetch_factor: 2
+  vis_threshold: 0.5
+  min_region_area: 64
+  max_region_area_ratio: 0.45
+  peak_split_threshold_ratio: 0.7
+  box_nms_iou: 0.3
+  max_boxes: 3
+  export_seed: 3407
+  export_num_images: 20

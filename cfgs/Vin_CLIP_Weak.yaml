@@ -1,0 +1,123 @@
+Exp:
+  out_dir: "output/AEU/Vin_CLIP_Weak/"
+  gpu: 3
+  gpu_ids: [3]
+
+Ensemble:
+  target_count: 3
+  base_seed: 3407
+  real_score_topk_ratio: 0.01
+
+Model:
+  network: "AE-U"
+  mp: 1
+  ls: 16
+  mem_dim: Null
+  shrink_thres: Null
+  entropy_loss_weight: 2.0e-4
+
+Data:
+  dataset: "vin"
+  img_size: 64
+  clip_img_size: 336
+  val_ratio: 0.1
+  val_seed: 0
+  workers: 12
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  cache_images: true
+  synthetic_mode_probs:
+    copy_paste: 0.4
+    intensity_shift: 0.2
+    blur_or_sharpen: 0.2
+  synthetic_shape_probs:
+    rectangle: 0.15
+    ellipse: 0.25
+    blob: 0.25
+    multi_blob: 0.20
+    streak: 0.15
+
+Solver:
+  bs: 64
+  lr: 5.0e-4
+  weight_decay: 0.0
+  num_epoch: 250
+
+RefineSolver:
+  bs: 64
+  lr: 5.0e-4
+  weight_decay: 0.0
+  num_epoch: 250
+  grad_clip: Null
+  band_mode: "fixed_3band"
+  score_topk_ratio: 0.01
+
+CLIP:
+  bs: 4
+  val_bs: 4
+  workers: 4
+  val_workers: 2
+  persistent_workers: true
+  val_persistent_workers: false
+  prefetch_factor: 2
+  val_prefetch_factor: 2
+  cache_images: true
+  cache_clip_images: false
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  num_epoch: 20
+  backbone_name: "ViT-L-14-336"
+  pretrained: "openai"
+  offline_pretrained: true
+  feature_layers: [6, 12, 18, 24]
+  seg_adapter_dim: 512
+  det_adapter_dim: 512
+  prompt_ensemble: "vin_chest_xray"
+  prompt_token_count: 4
+  use_dap_pooling: true
+  dap_alpha: 0.5
+  dap_detach_map: true
+  dap_temperature: 1.0
+  synthetic_probability: 0.5
+  image_loss_weight: 1.0
+  dice_loss_weight: 0.5
+  amp: true
+
+WeakCLIP:
+  group_key: "auto"
+  clean_val_ratio: 0.1
+  unlabeled_val_ratio: 0.1
+  pseudo_loss_weight: 1.0
+  pseudo_abnormal_min_target: 0.85
+  pseudo_normal_max_target: 0.15
+#  pseudo_top_abnormal_ratio: 0.02
+#  pseudo_bottom_normal_ratio: 0.10
+#  pseudo_abnormal_score_min: 0.70
+#  pseudo_normal_score_max: 0.20
+#  ddad_abnormal_percentile_min: 0.80
+#  ddad_normal_percentile_max: 0.20
+  pseudo_top_abnormal_ratio: 0.02
+  pseudo_bottom_normal_ratio: 0.05
+  pseudo_abnormal_score_min: 0.02
+  pseudo_normal_score_max: 0.01
+  ddad_abnormal_percentile_min: 0.90
+  ddad_normal_percentile_max: 0.15
+  student_use_synthetic_cls: false
+  student_clean_loss_weight: 0.5
+#  student_pseudo_loss_weight: 0.5
+#  student_seg_syn_weight: 0.0
+#  student_pseudo_loc_weight: 0.05
+  student_pseudo_loss_weight: 0.3
+  student_pseudo_loc_weight: 0.02
+  student_seg_syn_weight: 0.05
+  student_bg_suppression_weight: 0.05
+  use_refine_score: true
+  refine_checkpoint: "weak_refine_dual"
+  teacher_clean_loss_weight: 1.0
+  teacher_synthetic_cls_weight: 0.10
+  teacher_bg_suppression_weight: 0.01
+  teacher_seg_loss_weight: 0.1
+  checkpoint_metric: "unlabeled_val_hidden"
+  save_hidden_label_debug: true
+  eval_checkpoint: "student"

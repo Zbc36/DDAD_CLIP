@@ -1,0 +1,35 @@
+# dataset
+data/
+testdata/
+Med-AD_v1/
+
+# training outputs
+output/
+outputs/
+logs/
+
+# checkpoints
+*.pth
+*.pt
+*.ckpt
+
+# python cache
+__pycache__/
+*.pyc
+
+# virtual env
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# compressed files
+*.zip
+
+# swap/temp
+*.swp
+*.swo
+
+# system
+.DS_Store

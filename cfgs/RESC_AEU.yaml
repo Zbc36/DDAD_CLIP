@@ -1,0 +1,29 @@
+Exp:
+  out_dir: "output/AEU/RESC/"
+  gpu: 0
+
+Model:
+  network: "AE-U"
+  mp: 1
+  ls: 16
+  mem_dim: Null
+  shrink_thres: Null
+
+Data:
+  dataset: "resc"
+  img_size: 64
+  extra_data: 2500
+  ar: 0.1736
+
+Solver:
+  bs: 64
+  lr: 5.0e-4
+  weight_decay: 0
+  num_epoch: 250
+
+RefineSolver:
+  bs: 8
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  num_epoch: 100
+  grad_clip: Null

@@ -1,0 +1,12 @@
+torch
+torchvision
+tensorboardX
+scikit-learn
+pandas
+matplotlib
+joblib
+PyYAML
+einops
+diffusers
+transformers
+open_clip_torch

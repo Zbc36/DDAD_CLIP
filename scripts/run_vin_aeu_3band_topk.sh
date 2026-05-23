@@ -1,0 +1,15 @@
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode a;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode a;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode a;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode b;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode b;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode b;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode eval;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode r;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode eval_r;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode diff_a;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode diff_b;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode clip;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode cache_fusion;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode fusion;
+python main.py --config cfgs/Vin_AEU_3BandTopk.yaml --mode eval_all;
