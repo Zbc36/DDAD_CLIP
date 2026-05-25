@@ -4,6 +4,7 @@ from test import evaluate, test_rec, evaluate_r
 from argparse import ArgumentParser
 from multibranch_runtime import (
     cache_fusion_features,
+    build_safd_normal_bank,
     evaluate_clip_only,
     evaluate_clip_official,
     evaluate_all_modules,
@@ -13,11 +14,13 @@ from multibranch_runtime import (
     select_pseudo_labels,
     train_clip_module,
     train_clip_student,
+    train_clip_student_fusion,
     train_clip_teacher,
     train_diffusion_module,
     train_fusion_module,
     train_weak_ddad_module,
     train_weak_refine_module,
+    evaluate_clip_student_fusion_official,
 )
 
 torch.backends.cudnn.benchmark = True
@@ -47,7 +50,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument('--config', dest='config', type=str, default="config/RSNA_AE.yaml")  # config file
     parser.add_argument('--mode', dest='mode', type=str, default=None,
-                        help="e.g., a, b, r, eval, eval_r, test, diff_a, diff_b, clip, clip_teacher, weak_a, weak_b, weak_r, eval_weak_r, score_unlabeled, select_pseudo, clip_student, eval_clip_official, cache_fusion, fusion, eval_all, export_real_vis")
+                        help="e.g., a, b, r, eval, eval_r, test, diff_a, diff_b, clip, clip_teacher, weak_a, weak_b, weak_r, eval_weak_r, safd_bank, score_unlabeled, select_pseudo, clip_student, clip_student_fusion, eval_clip_official, eval_clip_student_fusion, cache_fusion, fusion, eval_all, export_real_vis")
     parser.add_argument('--refine', dest='refine_in', type=str, default="dual", help="dual, intra")
 
     """
@@ -120,6 +123,9 @@ if __name__ == "__main__":
     elif opt.mode == "eval_weak_r":
         print("=> Evaluating the weak DDAD refine branch ...")
         evaluate_weak_refine_module(cfgs, refine_in)
+    elif opt.mode == "safd_bank":
+        print("=> Building the SAFD clean-normal bank ...")
+        build_safd_normal_bank(cfgs, refine_in)
     elif opt.mode == "score_unlabeled":
         print("=> Scoring unlabeled pools with the CLIP teacher ...")
         score_unlabeled_with_teacher(cfgs)
@@ -129,12 +135,18 @@ if __name__ == "__main__":
     elif opt.mode == "clip_student":
         print("=> Fine-tuning the CLIP student with pseudo labels ...")
         train_clip_student(cfgs)
+    elif opt.mode == "clip_student_fusion":
+        print("=> Fine-tuning the DDAD-guided CLIP student fusion model ...")
+        train_clip_student_fusion(cfgs)
     elif opt.mode == "eval_clip":
         print("=> Evaluating the CLIP branch ...")
         evaluate_clip_only(cfgs)
     elif opt.mode == "eval_clip_official":
         print("=> Evaluating the weakly-supervised CLIP model on official_test ...")
         evaluate_clip_official(cfgs)
+    elif opt.mode == "eval_clip_student_fusion":
+        print("=> Evaluating the DDAD-guided CLIP student fusion model on official_test ...")
+        evaluate_clip_student_fusion_official(cfgs)
     elif opt.mode == "cache_fusion":
         print("=> Caching fusion inputs from DDAD + Diffusion + CLIP ...")
         cache_fusion_features(cfgs)

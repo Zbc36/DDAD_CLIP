@@ -833,6 +833,18 @@ class PseudoLabelDataset(data.Dataset):
         self._clip_cache = {}
         self.samples = []
 
+        def row_float(row, key, default=0.0):
+            value = row.get(key)
+            if value in {None, ""}:
+                return float(default)
+            return float(value)
+
+        def row_int(row, key, default=-1):
+            value = row.get(key)
+            if value in {None, ""}:
+                return int(default)
+            return int(value)
+
         with open(manifest_path, "r", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -845,11 +857,16 @@ class PseudoLabelDataset(data.Dataset):
                     "pseudo_target": float(row["pseudo_target"]),
                     "pseudo_weight": float(row["pseudo_weight"]),
                     "pseudo_kind": str(row.get("pseudo_kind") or ""),
-                    "teacher_score": float(row.get("teacher_score", row["pseudo_target"])),
-                    "ddad_score": float(row.get("ddad_score", 0.0)),
-                    "abnormal_joint_score": float(row.get("abnormal_joint_score", 0.0)),
-                    "normal_joint_score": float(row.get("normal_joint_score", 0.0)),
-                    "hidden_label": int(row.get("hidden_label", -1)),
+                    "teacher_score": row_float(row, "teacher_score", row["pseudo_target"]),
+                    "ddad_score": row_float(row, "ddad_score", 0.0),
+                    "ddad_percentile": row_float(row, "ddad_percentile", 0.0),
+                    "refined_ddad_score": row_float(row, "refined_ddad_score", 0.0),
+                    "refined_ddad_percentile": row_float(row, "refined_ddad_percentile", 0.0),
+                    "abnormal_joint_score": row_float(row, "abnormal_joint_score", 0.0),
+                    "normal_joint_score": row_float(row, "normal_joint_score", 0.0),
+                    "localization_confidence": row_float(row, "localization_confidence", 0.0),
+                    "background_consistency": row_float(row, "background_consistency", 0.0),
+                    "hidden_label": row_int(row, "hidden_label", -1),
                 })
 
         if len(self.samples) == 0:
@@ -897,8 +914,13 @@ class PseudoLabelDataset(data.Dataset):
             "pseudo_kind": str(sample["pseudo_kind"]),
             "teacher_score": torch.tensor(sample["teacher_score"], dtype=torch.float32),
             "ddad_score": torch.tensor(sample["ddad_score"], dtype=torch.float32),
+            "ddad_percentile": torch.tensor(sample["ddad_percentile"], dtype=torch.float32),
+            "refined_ddad_score": torch.tensor(sample["refined_ddad_score"], dtype=torch.float32),
+            "refined_ddad_percentile": torch.tensor(sample["refined_ddad_percentile"], dtype=torch.float32),
             "abnormal_joint_score": torch.tensor(sample["abnormal_joint_score"], dtype=torch.float32),
             "normal_joint_score": torch.tensor(sample["normal_joint_score"], dtype=torch.float32),
+            "localization_confidence": torch.tensor(sample["localization_confidence"], dtype=torch.float32),
+            "background_consistency": torch.tensor(sample["background_consistency"], dtype=torch.float32),
             "img_id": str(sample["img_id"]),
             "group_id": str(sample["group_id"]),
             "image_name": str(image_name),

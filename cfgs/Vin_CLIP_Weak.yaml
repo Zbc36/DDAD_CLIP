@@ -48,7 +48,7 @@ RefineSolver:
   bs: 64
   lr: 5.0e-4
   weight_decay: 0.0
-  num_epoch: 250
+  num_epoch: 100
   grad_clip: Null
   band_mode: "fixed_3band"
   score_topk_ratio: 0.01
@@ -66,7 +66,7 @@ CLIP:
   cache_clip_images: false
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  num_epoch: 20
+  num_epoch: 10
   backbone_name: "ViT-L-14-336"
   pretrained: "openai"
   offline_pretrained: true
@@ -97,8 +97,8 @@ WeakCLIP:
 #  pseudo_normal_score_max: 0.20
 #  ddad_abnormal_percentile_min: 0.80
 #  ddad_normal_percentile_max: 0.20
-  pseudo_top_abnormal_ratio: 0.02
-  pseudo_bottom_normal_ratio: 0.05
+  pseudo_top_abnormal_ratio: 0.035
+  pseudo_bottom_normal_ratio: 0.04
   pseudo_abnormal_score_min: 0.02
   pseudo_normal_score_max: 0.01
   ddad_abnormal_percentile_min: 0.90
@@ -108,12 +108,39 @@ WeakCLIP:
 #  student_pseudo_loss_weight: 0.5
 #  student_seg_syn_weight: 0.0
 #  student_pseudo_loc_weight: 0.05
-  student_pseudo_loss_weight: 0.3
-  student_pseudo_loc_weight: 0.02
+  student_pseudo_loss_weight: 0.35
+  student_pseudo_loc_weight: 0.05
   student_seg_syn_weight: 0.05
   student_bg_suppression_weight: 0.05
+  student_fusion_init_stage: "clip_student"
+  student_fusion_freeze_clip: true
+  student_fusion_loss_weight: 1.0
+  student_clip_aux_loss_weight: 0.3
+  student_ddad_map_loss_weight: 0.0
+  student_fusion_hidden_dim: 32
+  student_fusion_dropout: 0.1
   use_refine_score: true
   refine_checkpoint: "weak_refine_dual"
+  use_safd_score: false
+  safd_levels: 3
+  safd_patch_size: 4
+  safd_topk_ratio: 0.01
+  safd_lambda_repulsion: 1.0e-8
+  safd_seed: 3407
+  safd_score_mode: "normal_bank"
+  safd_fusion_mode: "agreement"
+  safd_apply_scope: "topup_only"
+  safd_normal_reduce: "max"
+  safd_normal_mad_eps: 1.0e-4
+  refined_ddad_joint_weight: 0.70
+  safd_joint_weight: 0.0
+  clip_joint_weight: 0.20
+  localization_joint_weight: 0.10
+  topup_abnormal_base_weight: 0.75
+  topup_abnormal_safd_weight: 0.25
+  pseudo_topup_abnormal_min_target: 0.75
+  pseudo_topup_abnormal_weight_scale: 0.4
+  pseudo_topup_abnormal_use_safd_gate: true
   teacher_clean_loss_weight: 1.0
   teacher_synthetic_cls_weight: 0.10
   teacher_bg_suppression_weight: 0.01

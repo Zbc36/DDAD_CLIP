@@ -28,7 +28,7 @@ from anomaly_data import CachedFusionDataset, MultiBranchDataset, PseudoLabelDat
 from models import AverageMeter, EntropyLossEncap, FocalLoss, get_model, load_ab
 from models.clip_branch import BiomedCLIPBranch
 from models.diffusion_unet import GaussianDiffusionReconstructor
-from models.fusion_refine_net import FusionRefineNet
+from models.fusion_refine_net import FusionRefineNet, SemanticBandDecomposer
 from refine_processing import (
     build_refine_input,
     fixed_three_band_decomposition,
@@ -253,8 +253,35 @@ def _get_weakclip_cfg(cfgs):
         "student_seg_syn_weight": float(weak_cfg.get("student_seg_syn_weight", 0.2)),
         "student_pseudo_loc_weight": float(weak_cfg.get("student_pseudo_loc_weight", 0.1)),
         "student_bg_suppression_weight": float(weak_cfg.get("student_bg_suppression_weight", 0.05)),
+        "student_fusion_loss_weight": float(weak_cfg.get("student_fusion_loss_weight", 1.0)),
+        "student_clip_aux_loss_weight": float(weak_cfg.get("student_clip_aux_loss_weight", 0.3)),
+        "student_ddad_map_loss_weight": float(weak_cfg.get("student_ddad_map_loss_weight", 0.05)),
+        "student_fusion_hidden_dim": int(weak_cfg.get("student_fusion_hidden_dim", 32)),
+        "student_fusion_dropout": float(weak_cfg.get("student_fusion_dropout", 0.1)),
+        "student_fusion_init_stage": str(weak_cfg.get("student_fusion_init_stage", "clip_student")).strip().lower(),
+        "student_fusion_freeze_clip": bool(weak_cfg.get("student_fusion_freeze_clip", True)),
         "use_refine_score": bool(weak_cfg.get("use_refine_score", False)),
         "refine_checkpoint": str(weak_cfg.get("refine_checkpoint", "weak_refine_dual")).strip(),
+        "use_safd_score": bool(weak_cfg.get("use_safd_score", False)),
+        "safd_levels": int(weak_cfg.get("safd_levels", 3)),
+        "safd_patch_size": int(weak_cfg.get("safd_patch_size", 4)),
+        "safd_topk_ratio": float(weak_cfg.get("safd_topk_ratio", 0.01)),
+        "safd_lambda_repulsion": float(weak_cfg.get("safd_lambda_repulsion", 1.0e-8)),
+        "safd_seed": int(weak_cfg.get("safd_seed", 3407)),
+        "safd_score_mode": str(weak_cfg.get("safd_score_mode", "max")).strip().lower(),
+        "safd_normal_mad_eps": float(weak_cfg.get("safd_normal_mad_eps", 1.0e-4)),
+        "safd_normal_reduce": str(weak_cfg.get("safd_normal_reduce", "max")).strip().lower(),
+        "safd_fusion_mode": str(weak_cfg.get("safd_fusion_mode", "linear")).strip().lower(),
+        "safd_apply_scope": str(weak_cfg.get("safd_apply_scope", "global")).strip().lower(),
+        "topup_abnormal_safd_weight": float(weak_cfg.get("topup_abnormal_safd_weight", 0.25)),
+        "topup_abnormal_base_weight": float(weak_cfg.get("topup_abnormal_base_weight", 0.75)),
+        "refined_ddad_joint_weight": float(weak_cfg.get("refined_ddad_joint_weight", 0.60)),
+        "safd_joint_weight": float(weak_cfg.get("safd_joint_weight", 0.20)),
+        "clip_joint_weight": float(weak_cfg.get("clip_joint_weight", 0.15)),
+        "localization_joint_weight": float(weak_cfg.get("localization_joint_weight", 0.05)),
+        "pseudo_topup_abnormal_min_target": float(weak_cfg.get("pseudo_topup_abnormal_min_target", 0.75)),
+        "pseudo_topup_abnormal_weight_scale": float(weak_cfg.get("pseudo_topup_abnormal_weight_scale", 0.5)),
+        "pseudo_topup_abnormal_use_safd_gate": bool(weak_cfg.get("pseudo_topup_abnormal_use_safd_gate", False)),
         "teacher_clean_loss_weight": float(weak_cfg.get("teacher_clean_loss_weight", 1.0)),
         "teacher_synthetic_cls_weight": float(weak_cfg.get("teacher_synthetic_cls_weight", 1.0)),
         "teacher_seg_loss_weight": float(weak_cfg.get("teacher_seg_loss_weight", 0.2)),
@@ -1248,6 +1275,10 @@ def _clip_stage_checkpoint_paths(cfgs, stage_name):
         "best": os.path.join(stage_dir, "{}_best.pth".format(stage_name)),
         "last": os.path.join(stage_dir, "{}_last.pth".format(stage_name)),
     }
+
+
+def _clip_student_fusion_checkpoint_paths(cfgs):
+    return _clip_stage_checkpoint_paths(cfgs, "clip_student_fusion")
 
 
 def _load_clip_stage_model(cfgs, device, stage_name):
@@ -2850,6 +2881,108 @@ def _compute_refined_ddad_features(x64, cfgs, module_a, module_b, refine_net, re
     return outputs
 
 
+def _normalize_maps_per_sample(score_map):
+    if score_map.dim() != 4:
+        raise ValueError("Expected score_map with shape [B, C, H, W], got {}".format(tuple(score_map.shape)))
+    flat = score_map.float().view(score_map.size(0), score_map.size(1), -1)
+    mins = flat.min(dim=2).values.view(score_map.size(0), score_map.size(1), 1, 1)
+    maxs = flat.max(dim=2).values.view(score_map.size(0), score_map.size(1), 1, 1)
+    return (score_map.float() - mins) / (maxs - mins + 1.0e-6)
+
+
+def _build_weak_safd_decomposer(cfgs, device):
+    weak_cfg = _get_weakclip_cfg(cfgs)
+    score_mode = weak_cfg["safd_score_mode"]
+    if score_mode not in {"max", "mean", "normal_bank"}:
+        raise ValueError("WeakCLIP.safd_score_mode must be 'max', 'mean', or 'normal_bank', got '{}'".format(score_mode))
+    normal_reduce = weak_cfg["safd_normal_reduce"]
+    if normal_reduce not in {"max", "mean"}:
+        raise ValueError("WeakCLIP.safd_normal_reduce must be 'max' or 'mean', got '{}'".format(normal_reduce))
+    if weak_cfg["safd_fusion_mode"] not in {"linear", "agreement"}:
+        raise ValueError("WeakCLIP.safd_fusion_mode must be 'linear' or 'agreement', got '{}'".format(weak_cfg["safd_fusion_mode"]))
+    if weak_cfg["safd_apply_scope"] not in {"global", "topup_only"}:
+        raise ValueError("WeakCLIP.safd_apply_scope must be 'global' or 'topup_only', got '{}'".format(weak_cfg["safd_apply_scope"]))
+    rng_devices = [device.index] if device.type == "cuda" and device.index is not None else []
+    with torch.random.fork_rng(devices=rng_devices):
+        torch.manual_seed(weak_cfg["safd_seed"])
+        if device.type == "cuda":
+            torch.cuda.manual_seed(weak_cfg["safd_seed"])
+        decomposer = SemanticBandDecomposer(
+            n_levels=weak_cfg["safd_levels"],
+            patch_size=weak_cfg["safd_patch_size"],
+            lambda_repulsion=weak_cfg["safd_lambda_repulsion"],
+        )
+    return decomposer.to(device).eval()
+
+
+def _weak_safd_raw_maps_from_features(features):
+    raw_maps = torch.cat(
+        [
+            features["refined_map"].float(),
+            _normalize_maps_per_sample(features["inter_img"].float()),
+            _normalize_maps_per_sample(features["intra_img"].float()),
+        ],
+        dim=1,
+    )
+    return raw_maps
+
+
+def _compute_weak_safd_coefficients(features, safd_decomposer):
+    raw_maps = _weak_safd_raw_maps_from_features(features)
+    _, coeff_maps, _ = safd_decomposer(raw_maps)
+    return coeff_maps.float()
+
+
+def _compute_weak_safd_score(features, safd_decomposer, weak_cfg):
+    raw_maps = _weak_safd_raw_maps_from_features(features)
+    band_maps, _, _ = safd_decomposer(raw_maps)
+    score_maps = band_maps.permute(0, 2, 1, 3, 4).contiguous()
+    batch_size, channels, levels, height, width = score_maps.shape
+    flattened_maps = score_maps.view(batch_size * channels * levels, 1, height, width)
+    band_scores = _topk_mean_score(flattened_maps, weak_cfg["safd_topk_ratio"]).view(batch_size, channels * levels)
+    if weak_cfg["safd_score_mode"] == "mean":
+        safd_score = band_scores.mean(dim=1, keepdim=True)
+    else:
+        safd_score = band_scores.max(dim=1, keepdim=True).values
+    return safd_score.float(), band_scores.float()
+
+
+def _compute_weak_safd_normal_score(features, safd_decomposer, safd_bank, weak_cfg, device):
+    coeff_maps = _compute_weak_safd_coefficients(features, safd_decomposer)
+    median = safd_bank["median"].to(device=device, dtype=coeff_maps.dtype)
+    mad = safd_bank["mad"].to(device=device, dtype=coeff_maps.dtype)
+    eps = float(safd_bank.get("mad_eps", weak_cfg["safd_normal_mad_eps"]))
+    if tuple(coeff_maps.shape[1:]) != tuple(median.shape):
+        raise RuntimeError(
+            "SAFD normal bank shape {} does not match current coefficient shape {}. "
+            "Rebuild it with mode safd_bank.".format(tuple(median.shape), tuple(coeff_maps.shape[1:]))
+        )
+    distance = torch.abs(coeff_maps - median.unsqueeze(0)) / (mad.unsqueeze(0) + eps)
+    batch_size, levels, channels, height, width = distance.shape
+    flattened = distance.reshape(batch_size * levels * channels, 1, height, width)
+    band_scores = _topk_mean_score(flattened, weak_cfg["safd_topk_ratio"]).view(batch_size, levels * channels)
+    if weak_cfg["safd_normal_reduce"] == "mean":
+        safd_score = band_scores.mean(dim=1, keepdim=True)
+    else:
+        safd_score = band_scores.max(dim=1, keepdim=True).values
+    return safd_score.float(), band_scores.float()
+
+
+def _load_weak_safd_normal_bank(cfgs, device):
+    bank_path = _weakclip_safd_bank_path(cfgs)
+    if not os.path.exists(bank_path):
+        raise FileNotFoundError(
+            "Expected SAFD normal bank at {}. Run: python main.py --config <config> --mode safd_bank".format(bank_path)
+        )
+    try:
+        bank = torch.load(bank_path, map_location=device, weights_only=False)
+    except TypeError:
+        bank = torch.load(bank_path, map_location=device)
+    if "median" not in bank or "mad" not in bank:
+        raise RuntimeError("Invalid SAFD normal bank at {}: missing median/mad.".format(bank_path))
+    return bank
+
+
 def _compute_diffusion_branch_features(x64, cfgs, diff_a_model, diff_b_model):
     diff_cfg = _get_section(cfgs, "Diffusion")
     topk_ratio = _get_ensemble_cfg(cfgs)["real_score_topk_ratio"]
@@ -3352,6 +3485,14 @@ def _weakclip_pseudo_output_dir(cfgs):
     return _ensure_dir(os.path.join(cfgs["Exp"]["out_dir"], "pseudo"))
 
 
+def _weakclip_safd_output_dir(cfgs):
+    return _ensure_dir(os.path.join(cfgs["Exp"]["out_dir"], "safd"))
+
+
+def _weakclip_safd_bank_path(cfgs):
+    return os.path.join(_weakclip_safd_output_dir(cfgs), "safd_normal_bank.pth")
+
+
 def _teacher_unlabeled_score_paths(cfgs):
     pseudo_dir = _weakclip_pseudo_output_dir(cfgs)
     return {
@@ -3458,6 +3599,97 @@ def _background_suppression_loss(patch_map):
             return torch.tensor(0.0)
         return _zero_loss(patch_map)
     return torch.sigmoid(patch_map.float()).mean()
+
+
+class DDADGuidedStudentFusionHead(nn.Module):
+    def __init__(self, in_dim=11, hidden_dim=32, dropout=0.1):
+        super().__init__()
+        hidden_dim = max(int(hidden_dim), int(in_dim) * 2)
+        self.net = nn.Sequential(
+            nn.LayerNorm(int(in_dim)),
+            nn.Linear(int(in_dim), hidden_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)),
+            nn.Linear(hidden_dim, max(hidden_dim // 2, 16)),
+            nn.GELU(),
+            nn.Dropout(float(dropout)),
+            nn.Linear(max(hidden_dim // 2, 16), 1),
+        )
+
+    def forward(self, x):
+        return self.net(x.float())
+
+
+def _clip_patch_quality_tensors(patch_map):
+    patch_tensor = patch_map.float()
+    if patch_tensor.dim() == 4:
+        patch_tensor = patch_tensor.squeeze(1)
+    flat_prob = torch.sigmoid(patch_tensor).view(patch_tensor.size(0), -1)
+    topk_count = max(1, int(np.ceil(flat_prob.size(1) * 0.01)))
+    topk_mean = torch.topk(flat_prob, k=topk_count, dim=1).values.mean(dim=1)
+    peak = flat_prob.max(dim=1).values
+    foreground_ratio = (flat_prob >= 0.7).float().mean(dim=1)
+    normalized_prob = flat_prob / flat_prob.sum(dim=1, keepdim=True).clamp_min(1.0e-6)
+    entropy = -(normalized_prob * normalized_prob.clamp_min(1.0e-6).log()).sum(dim=1)
+    entropy = entropy / float(np.log(flat_prob.size(1)))
+    localization_confidence = topk_mean * (1.0 - entropy).clamp_min(0.0)
+    background_consistency = ((1.0 - topk_mean) * (1.0 - peak) * (1.0 - foreground_ratio)).clamp_min(0.0)
+    return {
+        "peak": peak,
+        "topk_mean": topk_mean,
+        "foreground_ratio": foreground_ratio,
+        "entropy": entropy,
+        "localization_confidence": localization_confidence,
+        "background_consistency": background_consistency,
+    }
+
+
+def _build_student_fusion_vector(
+    clip_logit,
+    patch_map,
+    refined_features,
+    manifest_abnormal_joint=None,
+    manifest_normal_joint=None,
+):
+    clip_logit = clip_logit.float().view(-1, 1)
+    clip_score = torch.sigmoid(clip_logit)
+    refined_score = refined_features["refined_score"].float().view(-1, 1).detach()
+    ddad_score = refined_features["score"].float().view(-1, 1).detach()
+    quality = _clip_patch_quality_tensors(patch_map)
+    localization_confidence = quality["localization_confidence"].view(-1, 1)
+    background_consistency = quality["background_consistency"].view(-1, 1)
+    if manifest_abnormal_joint is None:
+        abnormal_joint = (
+            0.70 * refined_score.clamp(0.0, 1.0) +
+            0.20 * clip_score +
+            0.10 * localization_confidence.clamp(0.0, 1.0)
+        )
+    else:
+        abnormal_joint = manifest_abnormal_joint.float().view(-1, 1).to(device=clip_logit.device)
+    if manifest_normal_joint is None:
+        normal_joint = (
+            0.70 * (1.0 - refined_score.clamp(0.0, 1.0)) +
+            0.20 * (1.0 - clip_score) +
+            0.10 * background_consistency.clamp(0.0, 1.0)
+        )
+    else:
+        normal_joint = manifest_normal_joint.float().view(-1, 1).to(device=clip_logit.device)
+    return torch.cat(
+        [
+            clip_logit,
+            clip_score,
+            refined_score.to(device=clip_logit.device),
+            ddad_score.to(device=clip_logit.device),
+            abnormal_joint,
+            normal_joint,
+            quality["peak"].view(-1, 1),
+            quality["topk_mean"].view(-1, 1),
+            quality["foreground_ratio"].view(-1, 1),
+            localization_confidence,
+            background_consistency,
+        ],
+        dim=1,
+    )
 
 
 def _run_clip_teacher_epoch(
@@ -3689,6 +3921,104 @@ def _run_clip_pseudo_epoch(
     }
 
 
+def _run_clip_student_fusion_pseudo_epoch(
+    loader,
+    model,
+    fusion_head,
+    cfgs,
+    module_a,
+    module_b,
+    refine_net,
+    refine_in,
+    refine_runtime_cfg,
+    device,
+    optimizer,
+    scaler,
+    amp_enabled,
+    fusion_loss_weight,
+    clip_aux_loss_weight,
+    ddad_map_loss_weight,
+    bg_weight,
+):
+    total_meter = AverageMeter()
+    fused_meter = AverageMeter()
+    clip_meter = AverageMeter()
+    map_meter = AverageMeter()
+    bg_meter = AverageMeter()
+    image_loss_fn = nn.BCEWithLogitsLoss(reduction="none")
+    clip_is_frozen = not any(param.requires_grad for param in model.parameters())
+    model.eval() if clip_is_frozen else model.train()
+    fusion_head.train()
+    refine_net.eval()
+    for batch in loader:
+        image_224 = _move_tensor(batch["image_224"], device)
+        x64 = _move_tensor(batch["image_64"], device)
+        pseudo_target = _move_tensor(batch["pseudo_target"].float(), device).view(-1)
+        pseudo_weight = _move_tensor(batch["pseudo_weight"].float(), device).view(-1)
+        abnormal_mask = pseudo_target >= 0.5
+        normal_mask = ~abnormal_mask
+        abnormal_joint = _move_tensor(batch["abnormal_joint_score"].float(), device).view(-1)
+        normal_joint = _move_tensor(batch["normal_joint_score"].float(), device).view(-1)
+
+        optimizer.zero_grad(set_to_none=True)
+        with torch.no_grad():
+            refined_features = _compute_refined_ddad_features(
+                x64,
+                cfgs,
+                module_a,
+                module_b,
+                refine_net,
+                refine_in,
+                refine_runtime_cfg,
+            )
+        with _autocast_context(amp_enabled):
+            outputs = model(
+                image_224,
+                output_size=batch["image_64"].shape[-2:],
+                return_patch_maps=True,
+            )
+            clip_logits = outputs["global_logit"].view(-1).float()
+            fusion_vector = _build_student_fusion_vector(
+                clip_logits,
+                outputs["patch_map"],
+                refined_features,
+                manifest_abnormal_joint=abnormal_joint,
+                manifest_normal_joint=normal_joint,
+            )
+            fused_logits = fusion_head(fusion_vector).view(-1)
+            fused_loss = (image_loss_fn(fused_logits, pseudo_target) * pseudo_weight).mean()
+            clip_aux_loss = (image_loss_fn(clip_logits, pseudo_target) * pseudo_weight).mean()
+            ddad_map_loss = _zero_loss(outputs["global_logit"])
+            if float(ddad_map_loss_weight) > 0.0 and "patch_map" in outputs and bool(abnormal_mask.any()):
+                student_patch = torch.sigmoid(outputs["patch_map"][abnormal_mask].float())
+                ddad_patch = refined_features["refined_map"][abnormal_mask].float().to(device=student_patch.device)
+                ddad_map_loss = F.mse_loss(student_patch, ddad_patch)
+            bg_loss = _zero_loss(outputs["global_logit"])
+            if "patch_map" in outputs and bool(normal_mask.any()):
+                bg_loss = _background_suppression_loss(outputs["patch_map"][normal_mask])
+            loss = (
+                float(fusion_loss_weight) * fused_loss +
+                float(clip_aux_loss_weight) * clip_aux_loss +
+                float(ddad_map_loss_weight) * ddad_map_loss +
+                float(bg_weight) * bg_loss
+            )
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        total_meter.update(loss.item(), image_224.size(0))
+        fused_meter.update(float(fused_loss.item()), image_224.size(0))
+        clip_meter.update(float(clip_aux_loss.item()), image_224.size(0))
+        map_meter.update(float(ddad_map_loss.item()), image_224.size(0))
+        bg_meter.update(float(bg_loss.item()), image_224.size(0))
+    return {
+        "total": total_meter.avg,
+        "fused_cls": fused_meter.avg,
+        "clip_aux": clip_meter.avg,
+        "ddad_map": map_meter.avg,
+        "bg": bg_meter.avg,
+    }
+
+
 def _run_weak_ddad_train_epoch(loader, model, network, optimizer, entropy_loss_weight=0.0):
     total_meter = AverageMeter()
     rec_meter = AverageMeter()
@@ -3849,6 +4179,145 @@ def _collect_refined_ddad_score_rows(loader, cfgs, module_a, module_b, refine_ne
                     "hidden_label": int(hidden_label),
                 })
     return rows
+
+
+def _collect_safd_ddad_score_rows(loader, cfgs, module_a, module_b, refine_net, refine_in, refine_runtime_cfg, device):
+    rows = []
+    weak_cfg = _get_weakclip_cfg(cfgs)
+    safd_decomposer = _build_weak_safd_decomposer(cfgs, device)
+    safd_bank = _load_weak_safd_normal_bank(cfgs, device) if weak_cfg["safd_score_mode"] == "normal_bank" else None
+    with torch.no_grad():
+        for batch in loader:
+            x64 = _move_tensor(batch["image_64"], device)
+            features = _compute_refined_ddad_features(
+                x64,
+                cfgs,
+                module_a,
+                module_b,
+                refine_net,
+                refine_in,
+                refine_runtime_cfg,
+            )
+            if weak_cfg["safd_score_mode"] == "normal_bank":
+                safd_scores, band_scores = _compute_weak_safd_normal_score(
+                    features, safd_decomposer, safd_bank, weak_cfg, device
+                )
+            else:
+                safd_scores, band_scores = _compute_weak_safd_score(features, safd_decomposer, weak_cfg)
+            safd_scores = safd_scores.view(-1).detach().cpu().numpy().tolist()
+            band_mean = band_scores.mean(dim=1).detach().cpu().numpy().tolist()
+            band_max = band_scores.max(dim=1).values.detach().cpu().numpy().tolist()
+            hidden_labels = batch.get("hidden_label")
+            if hidden_labels is None:
+                hidden_label_values = [-1] * len(safd_scores)
+            else:
+                hidden_label_values = hidden_labels.cpu().numpy().tolist()
+            image_names = batch.get("image_name")
+            if image_names is None:
+                image_names = [str(img_id) for img_id in batch["img_id"]]
+            group_ids = batch.get("group_id")
+            if group_ids is None:
+                group_ids = [str(img_id) for img_id in batch["img_id"]]
+            for img_id, group_id, image_name, safd_score, safd_band_mean, safd_band_max, hidden_label in zip(
+                batch["img_id"],
+                group_ids,
+                image_names,
+                safd_scores,
+                band_mean,
+                band_max,
+                hidden_label_values,
+            ):
+                rows.append({
+                    "img_id": str(img_id),
+                    "group_id": str(group_id),
+                    "image_name": str(image_name),
+                    "safd_ddad_score": float(safd_score),
+                    "safd_normal_score": float(safd_score),
+                    "safd_ddad_band_mean": float(safd_band_mean),
+                    "safd_ddad_band_max": float(safd_band_max),
+                    "safd_normal_band_mean": float(safd_band_mean),
+                    "safd_normal_band_max": float(safd_band_max),
+                    "hidden_label": int(hidden_label),
+                })
+    return rows
+
+
+def build_safd_normal_bank(cfgs, refine_in):
+    device = _get_device(cfgs)
+    clip_cfg = _get_section(cfgs, "CLIP")
+    loader_overrides = _get_clip_loader_overrides(cfgs)
+    batch_size = int(clip_cfg.get("val_bs", clip_cfg.get("bs", 4)))
+    dataset_kwargs = _weakclip_dataset_kwargs(cfgs)
+    weak_cfg = _get_weakclip_cfg(cfgs)
+    if not weak_cfg["use_refine_score"]:
+        raise RuntimeError("SAFD normal bank requires WeakCLIP.use_refine_score=true.")
+
+    loader = _build_multibranch_loader(
+        cfgs,
+        subset="clean_train_normal",
+        batch_size=batch_size,
+        shuffle=False,
+        synthetic_probability=0.0,
+        drop_last=False,
+        include_clip=False,
+        num_workers_override=loader_overrides["val_workers"],
+        persistent_workers_override=loader_overrides["val_persistent_workers"],
+        prefetch_factor_override=loader_overrides["val_prefetch_factor"],
+        cache_images_override=loader_overrides["cache_images"],
+        cache_clip_images_override=loader_overrides["cache_clip_images"],
+        dataset_kwargs=dataset_kwargs,
+    )
+    module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
+    module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
+    refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
+    refine_net.eval()
+    safd_decomposer = _build_weak_safd_decomposer(cfgs, device)
+
+    coeff_chunks = []
+    with torch.no_grad():
+        for batch in loader:
+            x64 = _move_tensor(batch["image_64"], device)
+            features = _compute_refined_ddad_features(
+                x64,
+                cfgs,
+                module_a,
+                module_b,
+                refine_net,
+                refine_in,
+                refine_runtime_cfg,
+            )
+            coeff_chunks.append(_compute_weak_safd_coefficients(features, safd_decomposer).detach().cpu())
+    if len(coeff_chunks) == 0:
+        raise RuntimeError("No clean normal samples available to build SAFD normal bank.")
+
+    coeffs = torch.cat(coeff_chunks, dim=0).float()
+    median = coeffs.median(dim=0).values
+    mad = torch.abs(coeffs - median.unsqueeze(0)).median(dim=0).values
+    bank = {
+        "median": median,
+        "mad": mad.clamp_min(float(weak_cfg["safd_normal_mad_eps"])),
+        "mad_eps": float(weak_cfg["safd_normal_mad_eps"]),
+        "count": int(coeffs.size(0)),
+        "shape": list(median.shape),
+        "safd_levels": int(weak_cfg["safd_levels"]),
+        "safd_patch_size": int(weak_cfg["safd_patch_size"]),
+        "safd_topk_ratio": float(weak_cfg["safd_topk_ratio"]),
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    bank_path = _weakclip_safd_bank_path(cfgs)
+    torch.save(bank, bank_path)
+    summary_path = os.path.join(_weakclip_safd_output_dir(cfgs), "safd_normal_bank_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump({
+            "checkpoint": bank_path,
+            "count": bank["count"],
+            "shape": bank["shape"],
+            "safd_levels": bank["safd_levels"],
+            "safd_patch_size": bank["safd_patch_size"],
+            "safd_topk_ratio": bank["safd_topk_ratio"],
+            "mad_eps": bank["mad_eps"],
+        }, f, indent=2)
+    print("=> Saved SAFD normal bank to {} (count={}, shape={})".format(bank_path, bank["count"], bank["shape"]))
 
 
 def _evaluate_weak_refine_loader(loader, cfgs, module_a, module_b, refine_net, refine_in, refine_runtime_cfg, device):
@@ -4530,6 +4999,10 @@ def score_unlabeled_with_teacher(cfgs):
     val_ddad_rows = _collect_ddad_score_rows(val_loader, cfgs, weak_module_a, weak_module_b, device)
     train_refined_rows = []
     val_refined_rows = []
+    train_safd_rows = []
+    val_safd_rows = []
+    if weak_cfg["use_safd_score"] and not weak_cfg["use_refine_score"]:
+        raise RuntimeError("WeakCLIP.use_safd_score=true requires WeakCLIP.use_refine_score=true.")
     if weak_cfg["use_refine_score"]:
         refine_in = ["inter_dis", "intra_dis"]
         refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
@@ -4553,6 +5026,27 @@ def score_unlabeled_with_teacher(cfgs):
             refine_runtime_cfg,
             device,
         )
+        if weak_cfg["use_safd_score"]:
+            train_safd_rows = _collect_safd_ddad_score_rows(
+                train_loader,
+                cfgs,
+                weak_module_a,
+                weak_module_b,
+                refine_net,
+                refine_in,
+                refine_runtime_cfg,
+                device,
+            )
+            val_safd_rows = _collect_safd_ddad_score_rows(
+                val_loader,
+                cfgs,
+                weak_module_a,
+                weak_module_b,
+                refine_net,
+                refine_in,
+                refine_runtime_cfg,
+                device,
+            )
 
     train_df = pd.DataFrame(train_rows)
     val_df = pd.DataFrame(val_rows)
@@ -4565,12 +5059,23 @@ def score_unlabeled_with_teacher(cfgs):
         val_refined_df = pd.DataFrame(val_refined_rows)
         train_df = train_df.merge(train_refined_df, on=["img_id", "group_id", "image_name", "hidden_label"], how="left")
         val_df = val_df.merge(val_refined_df, on=["img_id", "group_id", "image_name", "hidden_label"], how="left")
+    if weak_cfg["use_safd_score"]:
+        train_safd_df = pd.DataFrame(train_safd_rows)
+        val_safd_df = pd.DataFrame(val_safd_rows)
+        train_df = train_df.merge(train_safd_df, on=["img_id", "group_id", "image_name", "hidden_label"], how="left")
+        val_df = val_df.merge(val_safd_df, on=["img_id", "group_id", "image_name", "hidden_label"], how="left")
     for df in [train_df, val_df]:
         for column_name in [
             "ddad_score",
             "ddad_inter_score",
             "ddad_intra_score",
             "refined_ddad_score",
+            "safd_ddad_score",
+            "safd_normal_score",
+            "safd_ddad_band_mean",
+            "safd_ddad_band_max",
+            "safd_normal_band_mean",
+            "safd_normal_band_max",
             "refined_heatmap_peak",
             "refined_heatmap_topk_mean",
             "refined_heatmap_foreground_ratio",
@@ -4592,26 +5097,59 @@ def score_unlabeled_with_teacher(cfgs):
         train_df = _attach_rank_and_percentile(train_df, "refined_ddad_score", "refined_ddad")
         val_df = _attach_rank_and_percentile(val_df, "refined_ddad_score", "refined_ddad")
         ddad_percentile_column = "refined_ddad_percentile"
-    train_df["abnormal_joint_score"] = (
-        0.70 * train_df[ddad_percentile_column].astype(float) +
-        0.20 * train_df["clip_score_percentile"].astype(float) +
-        0.10 * train_df["localization_confidence_percentile"].astype(float)
-    )
-    train_df["normal_joint_score"] = (
-        0.70 * (1.0 - train_df[ddad_percentile_column].astype(float)) +
-        0.20 * (1.0 - train_df["clip_score_percentile"].astype(float)) +
-        0.10 * train_df["background_consistency_percentile"].astype(float)
-    )
-    val_df["abnormal_joint_score"] = (
-        0.70 * val_df[ddad_percentile_column].astype(float) +
-        0.20 * val_df["clip_score_percentile"].astype(float) +
-        0.10 * val_df["localization_confidence_percentile"].astype(float)
-    )
-    val_df["normal_joint_score"] = (
-        0.70 * (1.0 - val_df[ddad_percentile_column].astype(float)) +
-        0.20 * (1.0 - val_df["clip_score_percentile"].astype(float)) +
-        0.10 * val_df["background_consistency_percentile"].astype(float)
-    )
+    if weak_cfg["use_safd_score"]:
+        safd_score_column = "safd_normal_score" if weak_cfg["safd_score_mode"] == "normal_bank" else "safd_ddad_score"
+        safd_prefix = "safd_normal" if weak_cfg["safd_score_mode"] == "normal_bank" else "safd_ddad"
+        safd_percentile_column = "{}_percentile".format(safd_prefix)
+        train_df = _attach_rank_and_percentile(train_df, safd_score_column, safd_prefix)
+        val_df = _attach_rank_and_percentile(val_df, safd_score_column, safd_prefix)
+        if weak_cfg["safd_score_mode"] == "normal_bank":
+            train_df["safd_ddad_rank"] = train_df["safd_normal_rank"]
+            train_df["safd_ddad_percentile"] = train_df["safd_normal_percentile"]
+            val_df["safd_ddad_rank"] = val_df["safd_normal_rank"]
+            val_df["safd_ddad_percentile"] = val_df["safd_normal_percentile"]
+        for df in [train_df, val_df]:
+            refined_percentile = df[ddad_percentile_column].astype(float).clip(0.0, 1.0)
+            safd_percentile = df[safd_percentile_column].astype(float).clip(0.0, 1.0)
+            df["safd_refined_agreement_score"] = np.sqrt(refined_percentile * safd_percentile)
+            df["safd_normal_agreement_score"] = np.sqrt((1.0 - refined_percentile) * (1.0 - safd_percentile))
+            df["abnormal_joint_score"] = (
+                weak_cfg["refined_ddad_joint_weight"] * refined_percentile +
+                weak_cfg["clip_joint_weight"] * df["clip_score_percentile"].astype(float) +
+                weak_cfg["localization_joint_weight"] * df["localization_confidence_percentile"].astype(float)
+            )
+            df["normal_joint_score"] = (
+                weak_cfg["refined_ddad_joint_weight"] * (1.0 - refined_percentile) +
+                weak_cfg["clip_joint_weight"] * (1.0 - df["clip_score_percentile"].astype(float)) +
+                weak_cfg["localization_joint_weight"] * df["background_consistency_percentile"].astype(float)
+            )
+            df["topup_abnormal_score"] = (
+                weak_cfg["topup_abnormal_base_weight"] * df["abnormal_joint_score"].astype(float) +
+                weak_cfg["topup_abnormal_safd_weight"] * df["safd_refined_agreement_score"].astype(float)
+            )
+    else:
+        train_df["abnormal_joint_score"] = (
+            0.70 * train_df[ddad_percentile_column].astype(float) +
+            0.20 * train_df["clip_score_percentile"].astype(float) +
+            0.10 * train_df["localization_confidence_percentile"].astype(float)
+        )
+        train_df["normal_joint_score"] = (
+            0.70 * (1.0 - train_df[ddad_percentile_column].astype(float)) +
+            0.20 * (1.0 - train_df["clip_score_percentile"].astype(float)) +
+            0.10 * train_df["background_consistency_percentile"].astype(float)
+        )
+        val_df["abnormal_joint_score"] = (
+            0.70 * val_df[ddad_percentile_column].astype(float) +
+            0.20 * val_df["clip_score_percentile"].astype(float) +
+            0.10 * val_df["localization_confidence_percentile"].astype(float)
+        )
+        val_df["normal_joint_score"] = (
+            0.70 * (1.0 - val_df[ddad_percentile_column].astype(float)) +
+            0.20 * (1.0 - val_df["clip_score_percentile"].astype(float)) +
+            0.10 * val_df["background_consistency_percentile"].astype(float)
+        )
+        train_df["topup_abnormal_score"] = train_df["abnormal_joint_score"]
+        val_df["topup_abnormal_score"] = val_df["abnormal_joint_score"]
 
     train_df.sort_values("abnormal_joint_score", ascending=False).to_csv(output_paths["train_scores"], index=False)
     val_df.sort_values("abnormal_joint_score", ascending=False).to_csv(output_paths["val_scores"], index=False)
@@ -4636,15 +5174,39 @@ def score_unlabeled_with_teacher(cfgs):
         "val_normal_selection": _score_distribution_summary(
             [{"score": float(score)} for score in val_df["normal_joint_score"].astype(float).tolist()]
         ),
+        "train_topup_abnormal_selection": _score_distribution_summary(
+            [{"score": float(score)} for score in train_df["topup_abnormal_score"].astype(float).tolist()]
+        ),
+        "val_topup_abnormal_selection": _score_distribution_summary(
+            [{"score": float(score)} for score in val_df["topup_abnormal_score"].astype(float).tolist()]
+        ),
         "clip_hidden_debug_train": _hidden_label_metrics_from_rows(train_rows),
         "clip_hidden_debug_val": _hidden_label_metrics_from_rows(val_rows),
         "ddad_hidden_debug_train": _hidden_label_metrics_from_rows(train_ddad_rows, score_key="ddad_score"),
         "ddad_hidden_debug_val": _hidden_label_metrics_from_rows(val_ddad_rows, score_key="ddad_score"),
         "refined_ddad_hidden_debug_train": _hidden_label_metrics_from_rows(train_refined_rows, score_key="refined_ddad_score") if weak_cfg["use_refine_score"] else {"auc": 0.0, "ap": 0.0, "count": 0},
         "refined_ddad_hidden_debug_val": _hidden_label_metrics_from_rows(val_refined_rows, score_key="refined_ddad_score") if weak_cfg["use_refine_score"] else {"auc": 0.0, "ap": 0.0, "count": 0},
+        "safd_ddad_hidden_debug_train": _hidden_label_metrics_from_rows(train_safd_rows, score_key="safd_ddad_score") if weak_cfg["use_safd_score"] else {"auc": 0.0, "ap": 0.0, "count": 0},
+        "safd_ddad_hidden_debug_val": _hidden_label_metrics_from_rows(val_safd_rows, score_key="safd_ddad_score") if weak_cfg["use_safd_score"] else {"auc": 0.0, "ap": 0.0, "count": 0},
+        "safd_normal_hidden_debug_train": _hidden_label_metrics_from_rows(train_safd_rows, score_key="safd_normal_score") if weak_cfg["use_safd_score"] else {"auc": 0.0, "ap": 0.0, "count": 0},
+        "safd_normal_hidden_debug_val": _hidden_label_metrics_from_rows(val_safd_rows, score_key="safd_normal_score") if weak_cfg["use_safd_score"] else {"auc": 0.0, "ap": 0.0, "count": 0},
         "joint_hidden_debug_train": _hidden_label_metrics_from_rows(train_df.to_dict("records"), score_key="abnormal_joint_score"),
         "joint_hidden_debug_val": _hidden_label_metrics_from_rows(val_df.to_dict("records"), score_key="abnormal_joint_score"),
         "selection_score_source": ddad_percentile_column,
+        "use_safd_score": weak_cfg["use_safd_score"],
+        "safd_score_mode": weak_cfg["safd_score_mode"],
+        "safd_fusion_mode": weak_cfg["safd_fusion_mode"],
+        "safd_apply_scope": weak_cfg["safd_apply_scope"],
+        "joint_weights": {
+            "refined_ddad": weak_cfg["refined_ddad_joint_weight"],
+            "safd": 0.0,
+            "clip": weak_cfg["clip_joint_weight"],
+            "localization": weak_cfg["localization_joint_weight"],
+        },
+        "topup_weights": {
+            "base": weak_cfg["topup_abnormal_base_weight"],
+            "safd": weak_cfg["topup_abnormal_safd_weight"],
+        },
         "selection_ratios": {
             "pseudo_top_abnormal_ratio": weak_cfg["pseudo_top_abnormal_ratio"],
             "pseudo_bottom_normal_ratio": weak_cfg["pseudo_bottom_normal_ratio"],
@@ -4656,6 +5218,19 @@ def score_unlabeled_with_teacher(cfgs):
         ])
         summary["val_refined_ddad"] = _score_distribution_summary([
             {"score": row["refined_ddad_score"]} for row in val_refined_rows
+        ])
+    if weak_cfg["use_safd_score"]:
+        summary["train_safd_ddad"] = _score_distribution_summary([
+            {"score": row["safd_ddad_score"]} for row in train_safd_rows
+        ])
+        summary["val_safd_ddad"] = _score_distribution_summary([
+            {"score": row["safd_ddad_score"]} for row in val_safd_rows
+        ])
+        summary["train_safd_normal"] = _score_distribution_summary([
+            {"score": row["safd_normal_score"]} for row in train_safd_rows
+        ])
+        summary["val_safd_normal"] = _score_distribution_summary([
+            {"score": row["safd_normal_score"]} for row in val_safd_rows
         ])
     with open(output_paths["summary"], "w") as f:
         json.dump(summary, f, indent=2)
@@ -4709,6 +5284,16 @@ def select_pseudo_labels(cfgs):
                 "Run weak_r and then rerun score_unlabeled."
             )
         ddad_selection_column = "refined_ddad_percentile"
+    if weak_cfg["use_safd_score"]:
+        safd_required_columns = {"safd_ddad_score", "safd_ddad_percentile"}
+        if (
+            not safd_required_columns.issubset(set(train_df.columns)) or
+            not safd_required_columns.issubset(set(val_df.columns))
+        ):
+            raise RuntimeError(
+                "WeakCLIP.use_safd_score=true but unlabeled score files do not contain SAFD columns. "
+                "Rerun score_unlabeled with the current code."
+            )
 
     val_loc_threshold = float(np.quantile(val_df["localization_confidence"].astype(float).to_numpy(), 0.80))
     val_bg_threshold = float(np.quantile(val_df["background_consistency"].astype(float).to_numpy(), 0.80))
@@ -4721,6 +5306,7 @@ def select_pseudo_labels(cfgs):
     strict_abnormal_candidate_count = int(abnormal_mask.sum())
     pseudo_abnormal = train_df[abnormal_mask].copy()
     pseudo_abnormal = pseudo_abnormal.nlargest(abnormal_count, "abnormal_joint_score")
+    pseudo_abnormal["pseudo_source"] = "strict_abnormal"
     abnormal_topup_count = 0
     if len(pseudo_abnormal) < abnormal_count:
         fill_count = abnormal_count - len(pseudo_abnormal)
@@ -4728,9 +5314,11 @@ def select_pseudo_labels(cfgs):
         abnormal_fill_pool = train_df[
             ~train_df["img_id"].astype(str).isin(selected_abnormal_ids)
         ].copy()
-        abnormal_fill = abnormal_fill_pool.nlargest(fill_count, "abnormal_joint_score").copy()
+        topup_score_column = "topup_abnormal_score" if "topup_abnormal_score" in abnormal_fill_pool.columns else "abnormal_joint_score"
+        abnormal_fill = abnormal_fill_pool.nlargest(fill_count, topup_score_column).copy()
         abnormal_topup_count = int(len(abnormal_fill))
         if len(abnormal_fill) > 0:
+            abnormal_fill["pseudo_source"] = "topup_abnormal"
             pseudo_abnormal = pd.concat([pseudo_abnormal, abnormal_fill], axis=0, ignore_index=True)
             pseudo_abnormal = pseudo_abnormal.drop_duplicates(subset=["img_id"], keep="first")
 
@@ -4743,6 +5331,7 @@ def select_pseudo_labels(cfgs):
     pseudo_normal = pseudo_normal.nlargest(normal_count, "normal_joint_score")
     if len(pseudo_normal) == 0:
         pseudo_normal = train_df.nlargest(normal_count, "normal_joint_score").copy()
+    pseudo_normal["pseudo_source"] = "strict_normal"
 
     pseudo_abnormal["pseudo_kind"] = "abnormal"
     pseudo_normal["pseudo_kind"] = "normal"
@@ -4752,8 +5341,17 @@ def select_pseudo_labels(cfgs):
     pseudo_targets, pseudo_weights = [], []
     for row in selected_df.itertuples():
         if str(row.pseudo_kind) == "abnormal":
-            target = _weakclip_selection_targets(max(float(row.score), weak_cfg["pseudo_abnormal_min_target"]), weak_cfg)
+            if str(getattr(row, "pseudo_source", "")) == "topup_abnormal":
+                target_floor = weak_cfg["pseudo_topup_abnormal_min_target"]
+            else:
+                target_floor = weak_cfg["pseudo_abnormal_min_target"]
+            target = _weakclip_selection_targets(max(float(row.score), target_floor), weak_cfg)
             weight = _joint_confidence_weight(float(row.abnormal_joint_score))
+            if str(getattr(row, "pseudo_source", "")) == "topup_abnormal":
+                weight = max(0.2, weight * weak_cfg["pseudo_topup_abnormal_weight_scale"])
+                if weak_cfg["pseudo_topup_abnormal_use_safd_gate"] and hasattr(row, "safd_refined_agreement_score"):
+                    safd_gate = 0.5 + 0.5 * float(row.safd_refined_agreement_score)
+                    weight = max(0.2, weight * safd_gate)
         else:
             target = _weakclip_selection_targets(min(float(row.score), weak_cfg["pseudo_normal_max_target"]), weak_cfg)
             weight = _joint_confidence_weight(float(row.normal_joint_score))
@@ -4773,7 +5371,20 @@ def select_pseudo_labels(cfgs):
         "refined_ddad_score",
         "refined_ddad_rank",
         "refined_ddad_percentile",
+        "safd_ddad_score",
+        "safd_ddad_rank",
+        "safd_ddad_percentile",
+        "safd_ddad_band_mean",
+        "safd_ddad_band_max",
+        "safd_normal_score",
+        "safd_normal_rank",
+        "safd_normal_percentile",
+        "safd_normal_band_mean",
+        "safd_normal_band_max",
+        "safd_refined_agreement_score",
+        "safd_normal_agreement_score",
         "abnormal_joint_score",
+        "topup_abnormal_score",
         "normal_joint_score",
         "heatmap_peak",
         "heatmap_topk_mean",
@@ -4791,6 +5402,7 @@ def select_pseudo_labels(cfgs):
         "pseudo_target",
         "pseudo_weight",
         "pseudo_kind",
+        "pseudo_source",
         "hidden_label",
     ]
     selected_df = selected_df[[column for column in manifest_columns if column in selected_df.columns]]
@@ -4813,6 +5425,15 @@ def select_pseudo_labels(cfgs):
             "selected_count": int(len(selected_df)),
             "selected_abnormal_count": int((selected_df["pseudo_kind"] == "abnormal").sum()),
             "selected_normal_count": int((selected_df["pseudo_kind"] == "normal").sum()),
+            "pseudo_source_counts": {
+                str(key): int(value)
+                for key, value in selected_df["pseudo_source"].value_counts().to_dict().items()
+            } if "pseudo_source" in selected_df.columns else {},
+            "topup_abnormal_min_target": weak_cfg["pseudo_topup_abnormal_min_target"],
+            "topup_abnormal_weight_scale": weak_cfg["pseudo_topup_abnormal_weight_scale"],
+            "topup_abnormal_use_safd_gate": weak_cfg["pseudo_topup_abnormal_use_safd_gate"],
+            "topup_abnormal_safd_weight": weak_cfg["topup_abnormal_safd_weight"],
+            "topup_abnormal_base_weight": weak_cfg["topup_abnormal_base_weight"],
         },
         "unlabeled_val_distribution": _score_distribution_summary(val_df.to_dict("records")),
         "selected_train_distribution": _score_distribution_summary(
@@ -4839,11 +5460,29 @@ def select_pseudo_labels(cfgs):
                     debug_df["hidden_label"].astype(int).tolist(),
                     debug_df["refined_ddad_score"].astype(float).tolist(),
                 ) if "refined_ddad_score" in debug_df.columns else None,
+                "safd_ddad_metrics": _classification_metrics(
+                    debug_df["hidden_label"].astype(int).tolist(),
+                    debug_df["safd_ddad_score"].astype(float).tolist(),
+                ) if "safd_ddad_score" in debug_df.columns else None,
+                "safd_normal_metrics": _classification_metrics(
+                    debug_df["hidden_label"].astype(int).tolist(),
+                    debug_df["safd_normal_score"].astype(float).tolist(),
+                ) if "safd_normal_score" in debug_df.columns else None,
                 "abnormal_joint_metrics": _classification_metrics(
                     debug_df["hidden_label"].astype(int).tolist(),
                     debug_df["abnormal_joint_score"].astype(float).tolist(),
                 ),
             }
+            if "pseudo_source" in debug_df.columns:
+                source_debug = {}
+                for source_name, source_df in debug_df.groupby("pseudo_source"):
+                    source_debug[str(source_name)] = {
+                        "count": int(len(source_df)),
+                        "positive_count": int(source_df["hidden_label"].astype(int).sum()),
+                        "positive_rate": float(source_df["hidden_label"].astype(int).mean()),
+                        "mean_pseudo_weight": float(source_df["pseudo_weight"].astype(float).mean()),
+                    }
+                summary["selected_hidden_debug"]["by_pseudo_source"] = source_debug
     with open(output_paths["selected_summary"], "w") as f:
         json.dump(summary, f, indent=2)
     print("=> Saved pseudo-label manifest to {}".format(output_paths["selected_manifest"]))
@@ -5077,6 +5716,444 @@ def train_clip_student(cfgs):
             _save_checkpoint(checkpoint_paths["best"], model, optimizer, extra=checkpoint_extra)
 
     writer.close()
+
+
+def _save_clip_student_fusion_checkpoint(path, model, fusion_head, optimizer=None, extra=None):
+    payload = {
+        "model": {
+            "clip": model.state_dict(),
+            "fusion_head": fusion_head.state_dict(),
+        }
+    }
+    if optimizer is not None:
+        payload["optimizer"] = optimizer.state_dict()
+    if extra is not None:
+        payload["extra"] = extra
+    torch.save(payload, path)
+
+
+def _load_clip_student_fusion_checkpoint(path, model, fusion_head, optimizer=None, map_location=None):
+    payload = torch.load(path, map_location=map_location)
+    state = payload.get("model", payload)
+    if "clip" not in state or "fusion_head" not in state:
+        raise RuntimeError("Invalid clip_student_fusion checkpoint: {}".format(path))
+    model.load_state_dict(state["clip"])
+    fusion_head.load_state_dict(state["fusion_head"])
+    if optimizer is not None and "optimizer" in payload:
+        optimizer.load_state_dict(payload["optimizer"])
+    return payload.get("extra", {})
+
+
+def train_clip_student_fusion(cfgs):
+    device = _get_device(cfgs)
+    clip_cfg = _get_section(cfgs, "CLIP")
+    loader_overrides = _get_clip_loader_overrides(cfgs)
+    amp_enabled = _amp_enabled(clip_cfg, device)
+    batch_size = int(clip_cfg.get("bs", 8))
+    val_batch_size = int(clip_cfg.get("val_bs", batch_size))
+    synthetic_probability = float(clip_cfg.get("synthetic_probability", 0.5))
+    weak_cfg = _get_weakclip_cfg(cfgs)
+    dataset_kwargs = _weakclip_dataset_kwargs(cfgs)
+    output_paths = _teacher_unlabeled_score_paths(cfgs)
+    if not os.path.exists(output_paths["selected_manifest"]):
+        raise FileNotFoundError(
+            "Expected pseudo-label manifest at {}. Run select_pseudo first.".format(output_paths["selected_manifest"])
+        )
+
+    pseudo_loader = _build_pseudo_label_loader(
+        cfgs,
+        output_paths["selected_manifest"],
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=False,
+    )
+    synthetic_val_loader = _build_multibranch_loader(
+        cfgs,
+        subset="clean_val_normal",
+        batch_size=val_batch_size,
+        shuffle=False,
+        synthetic_probability=synthetic_probability,
+        drop_last=False,
+        num_workers_override=loader_overrides["val_workers"],
+        persistent_workers_override=loader_overrides["val_persistent_workers"],
+        prefetch_factor_override=loader_overrides["val_prefetch_factor"],
+        cache_images_override=loader_overrides["cache_images"],
+        cache_clip_images_override=loader_overrides["cache_clip_images"],
+        dataset_kwargs=dataset_kwargs,
+    )
+    clean_val_loader = _build_multibranch_loader(
+        cfgs,
+        subset="clean_val_normal",
+        batch_size=val_batch_size,
+        shuffle=False,
+        synthetic_probability=0.0,
+        drop_last=False,
+        num_workers_override=loader_overrides["val_workers"],
+        persistent_workers_override=loader_overrides["val_persistent_workers"],
+        prefetch_factor_override=loader_overrides["val_prefetch_factor"],
+        cache_images_override=loader_overrides["cache_images"],
+        cache_clip_images_override=loader_overrides["cache_clip_images"],
+        dataset_kwargs=dataset_kwargs,
+    )
+
+    module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
+    module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
+    refine_in = ["inter_dis", "intra_dis"]
+    refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
+    refine_net.eval()
+
+    model = _build_clip_model(cfgs, device)
+    init_stage = weak_cfg["student_fusion_init_stage"]
+    if init_stage not in {"clip_student", "clip_teacher"}:
+        raise ValueError(
+            "WeakCLIP.student_fusion_init_stage must be 'clip_student' or 'clip_teacher', got '{}'".format(
+                init_stage
+            )
+        )
+    init_checkpoint = _clip_stage_checkpoint_paths(cfgs, init_stage)["best"]
+    if not os.path.exists(init_checkpoint):
+        raise FileNotFoundError(
+            "Expected {} checkpoint at {} for clip_student_fusion initialization.".format(
+                init_stage,
+                init_checkpoint,
+            )
+        )
+    _load_checkpoint(init_checkpoint, model, map_location=device)
+    if weak_cfg["student_fusion_freeze_clip"]:
+        _freeze_module(model)
+    else:
+        _configure_clip_trainable_parameters(model)
+    fusion_head = DDADGuidedStudentFusionHead(
+        in_dim=11,
+        hidden_dim=int(weak_cfg.get("student_fusion_hidden_dim", 32)),
+        dropout=float(weak_cfg.get("student_fusion_dropout", 0.1)),
+    ).to(device)
+    trainable_params = [param for param in model.parameters() if param.requires_grad] + list(fusion_head.parameters())
+    optimizer = torch.optim.Adam(
+        trainable_params,
+        lr=float(clip_cfg.get("lr", 1.0e-4)),
+        betas=(0.9, 0.999),
+        weight_decay=float(clip_cfg.get("weight_decay", 1.0e-4)),
+    )
+    scaler = _make_grad_scaler(amp_enabled)
+
+    fusion_loss_weight = float(weak_cfg.get("student_fusion_loss_weight", 1.0))
+    clip_aux_loss_weight = float(weak_cfg.get("student_clip_aux_loss_weight", 0.3))
+    ddad_map_loss_weight = float(weak_cfg.get("student_ddad_map_loss_weight", 0.05))
+    bg_weight = float(weak_cfg.get("student_bg_suppression_weight", 0.05))
+    effective_clip_aux_loss_weight = 0.0 if weak_cfg["student_fusion_freeze_clip"] else clip_aux_loss_weight
+
+    checkpoint_paths = _clip_student_fusion_checkpoint_paths(cfgs)
+    writer = SummaryWriter(os.path.join(cfgs["Exp"]["out_dir"], "log_clip_student_fusion"))
+    best_score = -float("inf")
+    num_epoch = int(clip_cfg.get("num_epoch", 30))
+    print(
+        "=> clip_student_fusion init_stage={} freeze_clip={} clip_aux_weight={:.4f} ddad_map_loss_weight={:.4f}".format(
+            init_stage,
+            weak_cfg["student_fusion_freeze_clip"],
+            effective_clip_aux_loss_weight,
+            ddad_map_loss_weight,
+        )
+    )
+
+    for epoch in range(1, num_epoch + 1):
+        start = time.time()
+        train_stats = _run_clip_student_fusion_pseudo_epoch(
+            pseudo_loader,
+            model,
+            fusion_head,
+            cfgs,
+            module_a,
+            module_b,
+            refine_net,
+            refine_in,
+            refine_runtime_cfg,
+            device,
+            optimizer,
+            scaler,
+            amp_enabled,
+            fusion_loss_weight,
+            effective_clip_aux_loss_weight,
+            ddad_map_loss_weight,
+            bg_weight,
+        )
+        model.eval()
+        fusion_head.eval()
+        synthetic_metrics = _evaluate_clip_image_metrics(
+            synthetic_val_loader,
+            model,
+            device,
+            amp_enabled=amp_enabled,
+        )
+        clean_stats = _evaluate_clip_score_stats(
+            clean_val_loader,
+            model,
+            device,
+            amp_enabled=amp_enabled,
+        )
+        score = (
+            float(synthetic_metrics["ap"]) -
+            float(train_stats["total"]) -
+            0.25 * float(clean_stats["mean"])
+        )
+        writer.add_scalar("train_total", train_stats["total"], epoch)
+        writer.add_scalar("train_fused_cls", train_stats["fused_cls"], epoch)
+        writer.add_scalar("train_clip_aux", train_stats["clip_aux"], epoch)
+        writer.add_scalar("train_ddad_map", train_stats["ddad_map"], epoch)
+        writer.add_scalar("train_bg", train_stats["bg"], epoch)
+        writer.add_scalar("val_synthetic_auc", synthetic_metrics["auc"], epoch)
+        writer.add_scalar("val_synthetic_ap", synthetic_metrics["ap"], epoch)
+        writer.add_scalar("val_clean_score_mean", clean_stats["mean"], epoch)
+        print(
+            "clip_student_fusion Epoch[{}/{}]\tTime:{:.1f}s\tLoss:{:.4f}\tFused:{:.4f}\tClipAux:{:.4f}\tDDADMap:{:.4f}\tBg:{:.4f}\tSyn AUC:{:.4f}\tSyn AP:{:.4f}\tClean Mean:{:.4f}\tAMP:{}".format(
+                epoch,
+                num_epoch,
+                time.time() - start,
+                train_stats["total"],
+                train_stats["fused_cls"],
+                train_stats["clip_aux"],
+                train_stats["ddad_map"],
+                train_stats["bg"],
+                synthetic_metrics["auc"],
+                synthetic_metrics["ap"],
+                clean_stats["mean"],
+                amp_enabled,
+            )
+        )
+        checkpoint_extra = {
+            "epoch": epoch,
+            "score": score,
+            "train_total": train_stats["total"],
+            "train_fused_cls": train_stats["fused_cls"],
+            "train_clip_aux": train_stats["clip_aux"],
+            "train_ddad_map": train_stats["ddad_map"],
+            "train_bg": train_stats["bg"],
+            "synthetic_auc": synthetic_metrics["auc"],
+            "synthetic_ap": synthetic_metrics["ap"],
+            "clean_score_mean": clean_stats["mean"],
+            "selection_metric": "synthetic_ap - train_total - 0.25 * clean_score_mean",
+            "student_fusion_init_stage": init_stage,
+            "student_fusion_init_checkpoint": init_checkpoint,
+            "student_fusion_freeze_clip": weak_cfg["student_fusion_freeze_clip"],
+            "student_ddad_map_loss_weight": ddad_map_loss_weight,
+            "student_clip_aux_loss_weight": clip_aux_loss_weight,
+            "student_effective_clip_aux_loss_weight": effective_clip_aux_loss_weight,
+            "student_fusion_loss_weight": fusion_loss_weight,
+        }
+        _save_clip_student_fusion_checkpoint(
+            checkpoint_paths["last"], model, fusion_head, optimizer=optimizer, extra=checkpoint_extra
+        )
+        if score > best_score:
+            best_score = score
+            _save_clip_student_fusion_checkpoint(
+                checkpoint_paths["best"], model, fusion_head, optimizer=optimizer, extra=checkpoint_extra
+            )
+
+    writer.close()
+
+
+def _collect_student_fusion_eval_rows(
+    loader,
+    cfgs,
+    model,
+    module_a,
+    module_b,
+    refine_net,
+    refine_in,
+    refine_runtime_cfg,
+    device,
+    amp_enabled=False,
+):
+    rows = []
+    with torch.no_grad():
+        model.eval()
+        refine_net.eval()
+        for batch in loader:
+            image_224 = _move_tensor(batch["image_224"], device)
+            x64 = _move_tensor(batch["image_64"], device)
+            refined_features = _compute_refined_ddad_features(
+                x64,
+                cfgs,
+                module_a,
+                module_b,
+                refine_net,
+                refine_in,
+                refine_runtime_cfg,
+            )
+            with _autocast_context(amp_enabled):
+                outputs = model(
+                    image_224,
+                    output_size=batch["image_64"].shape[-2:],
+                    return_patch_maps=True,
+                )
+            clip_logits = outputs["global_logit"].float().view(-1)
+            clip_scores = torch.sigmoid(clip_logits).detach().cpu().numpy().tolist()
+            clip_logits_list = clip_logits.detach().cpu().numpy().tolist()
+            refined_scores = refined_features["refined_score"].view(-1).detach().cpu().numpy().tolist()
+            ddad_scores = refined_features["score"].view(-1).detach().cpu().numpy().tolist()
+            quality = _clip_patch_quality_metrics(outputs["patch_map"])
+            labels = batch["label_img"].view(-1).detach().cpu().numpy().tolist()
+            image_names = batch.get("image_name")
+            if image_names is None:
+                image_names = [str(img_id) for img_id in batch["img_id"]]
+            group_ids = batch.get("group_id")
+            if group_ids is None:
+                group_ids = [str(img_id) for img_id in batch["img_id"]]
+            for index, (img_id, group_id, image_name, label) in enumerate(zip(
+                batch["img_id"],
+                group_ids,
+                image_names,
+                labels,
+            )):
+                rows.append({
+                    "img_id": str(img_id),
+                    "group_id": str(group_id),
+                    "image_name": str(image_name),
+                    "label": int(label),
+                    "clip_logit": float(clip_logits_list[index]),
+                    "clip_score": float(clip_scores[index]),
+                    "refined_ddad_score": float(refined_scores[index]),
+                    "ddad_score": float(ddad_scores[index]),
+                    "heatmap_peak": float(quality["peak"][index]),
+                    "heatmap_topk_mean": float(quality["topk_mean"][index]),
+                    "heatmap_foreground_ratio": float(quality["foreground_ratio"][index]),
+                    "localization_confidence": float(quality["localization_confidence"][index]),
+                    "background_consistency": float(quality["background_consistency"][index]),
+                })
+    return rows
+
+
+def _score_student_fusion_rows(rows, fusion_head, device):
+    df = pd.DataFrame(rows)
+    if len(df) == 0:
+        return df, {"auc": 0.0, "ap": 0.0}
+    df = _attach_rank_and_percentile(df, "refined_ddad_score", "refined_ddad")
+    df = _attach_rank_and_percentile(df, "clip_score", "clip_score")
+    df = _attach_rank_and_percentile(df, "localization_confidence", "localization_confidence")
+    df = _attach_rank_and_percentile(df, "background_consistency", "background_consistency")
+    df["abnormal_joint_score"] = (
+        0.70 * df["refined_ddad_percentile"].astype(float) +
+        0.20 * df["clip_score_percentile"].astype(float) +
+        0.10 * df["localization_confidence_percentile"].astype(float)
+    )
+    df["normal_joint_score"] = (
+        0.70 * (1.0 - df["refined_ddad_percentile"].astype(float)) +
+        0.20 * (1.0 - df["clip_score_percentile"].astype(float)) +
+        0.10 * df["background_consistency_percentile"].astype(float)
+    )
+    feature_columns = [
+        "clip_logit",
+        "clip_score",
+        "refined_ddad_score",
+        "ddad_score",
+        "abnormal_joint_score",
+        "normal_joint_score",
+        "heatmap_peak",
+        "heatmap_topk_mean",
+        "heatmap_foreground_ratio",
+        "localization_confidence",
+        "background_consistency",
+    ]
+    features = torch.tensor(df[feature_columns].astype(float).to_numpy(), dtype=torch.float32)
+    fusion_scores = []
+    fusion_head.eval()
+    with torch.no_grad():
+        for start in range(0, features.size(0), 256):
+            batch_features = features[start:start + 256].to(device)
+            logits = fusion_head(batch_features).view(-1)
+            fusion_scores.extend(torch.sigmoid(logits.float()).cpu().numpy().tolist())
+    df["fusion_score"] = fusion_scores
+    metrics = _classification_metrics(
+        df["label"].astype(int).tolist(),
+        df["fusion_score"].astype(float).tolist(),
+    )
+    metrics["count"] = int(len(df))
+    return df, metrics
+
+
+def evaluate_clip_student_fusion_official(cfgs):
+    device = _get_device(cfgs)
+    clip_cfg = _get_section(cfgs, "CLIP")
+    loader_overrides = _get_clip_loader_overrides(cfgs)
+    amp_enabled = _amp_enabled(clip_cfg, device)
+    batch_size = int(clip_cfg.get("val_bs", clip_cfg.get("bs", 4)))
+    dataset_kwargs = _weakclip_dataset_kwargs(cfgs)
+    checkpoint_path = _clip_student_fusion_checkpoint_paths(cfgs)["best"]
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(
+            "Could not find clip_student_fusion checkpoint at {}. Run mode clip_student_fusion first.".format(
+                checkpoint_path
+            )
+        )
+    official_test_loader = _build_multibranch_loader(
+        cfgs,
+        subset="official_test",
+        batch_size=batch_size,
+        shuffle=False,
+        synthetic_probability=0.0,
+        drop_last=False,
+        num_workers_override=loader_overrides["val_workers"],
+        persistent_workers_override=loader_overrides["val_persistent_workers"],
+        prefetch_factor_override=loader_overrides["val_prefetch_factor"],
+        cache_images_override=loader_overrides["cache_images"],
+        cache_clip_images_override=loader_overrides["cache_clip_images"],
+        dataset_kwargs=dataset_kwargs,
+    )
+    model = _build_clip_model(cfgs, device)
+    weak_cfg = _get_weakclip_cfg(cfgs)
+    fusion_head = DDADGuidedStudentFusionHead(
+        in_dim=11,
+        hidden_dim=int(weak_cfg.get("student_fusion_hidden_dim", 32)),
+        dropout=float(weak_cfg.get("student_fusion_dropout", 0.1)),
+    ).to(device)
+    checkpoint_extra = _load_clip_student_fusion_checkpoint(checkpoint_path, model, fusion_head, map_location=device)
+    model.eval()
+    fusion_head.eval()
+    refine_in = ["inter_dis", "intra_dis"]
+    module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
+    module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
+    refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
+    rows = _collect_student_fusion_eval_rows(
+        official_test_loader,
+        cfgs,
+        model,
+        module_a,
+        module_b,
+        refine_net,
+        refine_in,
+        refine_runtime_cfg,
+        device,
+        amp_enabled=amp_enabled,
+    )
+    scored_df, fusion_metrics = _score_student_fusion_rows(rows, fusion_head, device)
+    labels = scored_df["label"].astype(int).tolist() if len(scored_df) > 0 else []
+    results = {
+        "checkpoint": checkpoint_path,
+        "checkpoint_extra": {
+            "epoch": checkpoint_extra.get("epoch"),
+            "score": checkpoint_extra.get("score"),
+            "student_fusion_init_stage": checkpoint_extra.get("student_fusion_init_stage"),
+            "student_fusion_init_checkpoint": checkpoint_extra.get("student_fusion_init_checkpoint"),
+            "student_fusion_freeze_clip": checkpoint_extra.get("student_fusion_freeze_clip"),
+            "student_ddad_map_loss_weight": checkpoint_extra.get("student_ddad_map_loss_weight"),
+            "student_clip_aux_loss_weight": checkpoint_extra.get("student_clip_aux_loss_weight"),
+            "student_effective_clip_aux_loss_weight": checkpoint_extra.get("student_effective_clip_aux_loss_weight"),
+            "student_fusion_loss_weight": checkpoint_extra.get("student_fusion_loss_weight"),
+            "selection_metric": checkpoint_extra.get("selection_metric"),
+        },
+        "official_test_metrics": {
+            "clip_student_raw": _classification_metrics(labels, scored_df["clip_score"].astype(float).tolist()) if len(scored_df) > 0 else {"auc": 0.0, "ap": 0.0},
+            "refined_ddad": _classification_metrics(labels, scored_df["refined_ddad_score"].astype(float).tolist()) if len(scored_df) > 0 else {"auc": 0.0, "ap": 0.0},
+            "ddad_guided_student_fusion": fusion_metrics,
+        },
+    }
+    output_dir = cfgs["Exp"]["out_dir"]
+    result_path = os.path.join(output_dir, "eval_clip_student_fusion_results.json")
+    rows_path = os.path.join(output_dir, "eval_clip_student_fusion_scores.csv")
+    with open(result_path, "w") as f:
+        json.dump(results, f, indent=2)
+    scored_df.to_csv(rows_path, index=False)
+    print(json.dumps(results, indent=2))
 
 
 def evaluate_clip_official(cfgs):
