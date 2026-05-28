@@ -66,7 +66,7 @@ CLIP:
   cache_clip_images: false
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  num_epoch: 20
+  num_epoch: 10
   backbone_name: "ViT-L-14-336"
   pretrained: "openai"
   offline_pretrained: true
@@ -91,7 +91,7 @@ WeakCLIP:
   pseudo_loss_weight: 1.0
   pseudo_abnormal_min_target: 0.85
   pseudo_normal_max_target: 0.15
-  pseudo_top_abnormal_ratio: 0.045
+  pseudo_top_abnormal_ratio: 0.04
   pseudo_bottom_normal_ratio: 0.05
   pseudo_normal_min_relative_to_abnormal: 0.75
   pseudo_normal_target_relative_to_abnormal: 1.0
@@ -99,10 +99,10 @@ WeakCLIP:
   pseudo_normal_score_max: 0.01
   ddad_abnormal_percentile_min: 0.90
   ddad_normal_percentile_max: 0.15
-  student_training_mode: "legacy_stable"
-  pseudo_selection_mode: "legacy_stable"
+  student_training_mode: "balanced_ddad"
+  pseudo_selection_mode: "balanced_topup"
   student_use_synthetic_cls: false
-  student_experiment_name: "clip_student_legacy_stable_v1"
+  student_experiment_name: "clip_student_balanced_ddad_v1"
   student_fusion_experiment_name: "clip_student_fusion_balanced_ddadmap_v1"
   student_checkpoint_metric: "labeled_val_auc_ap"
   student_validation_subset: "unlabeled_val_pool"
@@ -110,8 +110,8 @@ WeakCLIP:
   pseudo_topup_normal_weight_scale: 0.75
   pseudo_topup_normal_percentile_max: 0.20
   student_clean_loss_weight: 0.5
-  student_pseudo_loss_weight: 0.6
-  student_pseudo_loc_weight: 0.02
+  student_pseudo_loss_weight: 0.4
+  student_pseudo_loc_weight: 0.05
   student_seg_syn_weight: 0.05
   student_bg_suppression_weight: 0.05
   student_train_ddad_map_loss_weight: 0.0
