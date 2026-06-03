@@ -54,6 +54,18 @@ RefineSolver:
   band_mode: "none"
   score_topk_ratio: 0.01
 
+DDADInputSAFD:
+  enabled: true
+  mode: "weighted_residual"
+  levels: 3
+  patch_size: 8
+  lambda_repulsion: 1.0e-8
+  raw_weight: 0.9
+  safd_weight: 0.1
+  band_weight_mode: "uniform"
+  branch_rms_norm: false
+  seed: 3407
+
 CLIP:
   bs: 4
   val_bs: 4

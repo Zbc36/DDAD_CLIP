@@ -3,8 +3,8 @@ set -euo pipefail
 
 CONFIG="${1:-cfgs/Vin_CLIP_Weak.yaml}"
 
-#python main.py --config "$CONFIG" --mode weak_a
-#python main.py --config "$CONFIG" --mode weak_b
+python main.py --config "$CONFIG" --mode weak_a
+python main.py --config "$CONFIG" --mode weak_b
 python main.py --config "$CONFIG" --mode weak_r --refine dual
 python main.py --config "$CONFIG" --mode eval_weak_r
 #python main.py --config "$CONFIG" --mode clip_teacher

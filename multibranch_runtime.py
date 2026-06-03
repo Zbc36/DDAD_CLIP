@@ -533,6 +533,101 @@ def _amp_enabled(section_cfg, device):
     return bool(section_cfg.get("amp", True)) and _device_is_cuda(device)
 
 
+def _get_ddad_input_safd_cfg(cfgs):
+    safd_cfg = _get_section(cfgs, "DDADInputSAFD")
+    mode = str(safd_cfg.get("mode", "weighted_residual")).strip().lower()
+    band_weight_mode = str(safd_cfg.get("band_weight_mode", "uniform")).strip().lower()
+    if mode != "weighted_residual":
+        raise ValueError("DDADInputSAFD.mode must be 'weighted_residual', got '{}'".format(mode))
+    if band_weight_mode != "uniform":
+        raise ValueError("DDADInputSAFD.band_weight_mode must be 'uniform', got '{}'".format(band_weight_mode))
+    return {
+        "enabled": bool(safd_cfg.get("enabled", False)),
+        "mode": mode,
+        "levels": int(safd_cfg.get("levels", 3)),
+        "patch_size": int(safd_cfg.get("patch_size", 8)),
+        "lambda_repulsion": float(safd_cfg.get("lambda_repulsion", 1.0e-8)),
+        "raw_weight": float(safd_cfg.get("raw_weight", 0.9)),
+        "safd_weight": float(safd_cfg.get("safd_weight", 0.1)),
+        "band_weight_mode": band_weight_mode,
+        "branch_rms_norm": bool(safd_cfg.get("branch_rms_norm", False)),
+        "seed": int(safd_cfg.get("seed", 3407)),
+    }
+
+
+def _build_ddad_input_safd_context(cfgs, device):
+    safd_cfg = _get_ddad_input_safd_cfg(cfgs)
+    return _build_ddad_input_safd_context_from_cfg(safd_cfg, device)
+
+
+def _build_ddad_input_safd_context_from_cfg(safd_cfg, device):
+    if not safd_cfg["enabled"]:
+        return None
+    if safd_cfg["levels"] <= 0:
+        raise ValueError("DDADInputSAFD.levels must be > 0, got {}".format(safd_cfg["levels"]))
+    if safd_cfg["patch_size"] <= 0:
+        raise ValueError("DDADInputSAFD.patch_size must be > 0, got {}".format(safd_cfg["patch_size"]))
+    cpu_state = torch.random.get_rng_state()
+    try:
+        torch.manual_seed(safd_cfg["seed"])
+        decomposer = SemanticBandDecomposer(
+            n_levels=safd_cfg["levels"],
+            patch_size=safd_cfg["patch_size"],
+            lambda_repulsion=safd_cfg["lambda_repulsion"],
+        ).to(device)
+    finally:
+        torch.random.set_rng_state(cpu_state)
+    decomposer.eval()
+    for param in decomposer.parameters():
+        param.requires_grad_(False)
+    return {
+        "cfg": safd_cfg,
+        "decomposer": decomposer,
+    }
+
+
+def _ddad_input_safd_summary(ddad_safd):
+    if ddad_safd is None:
+        return {
+            "enabled": False,
+            "mode": "weighted_residual",
+            "levels": 3,
+            "patch_size": 8,
+            "lambda_repulsion": 1.0e-8,
+            "raw_weight": 0.9,
+            "safd_weight": 0.1,
+            "band_weight_mode": "uniform",
+            "branch_rms_norm": False,
+            "seed": 3407,
+        }
+    return dict(ddad_safd["cfg"])
+
+
+def _rms_normalize_image_branch(x, eps=1.0e-6):
+    rms = x.float().pow(2).mean(dim=(-2, -1), keepdim=True).sqrt()
+    return x.float() / (rms + eps)
+
+
+def _apply_ddad_input_safd(x64, ddad_safd):
+    if ddad_safd is None:
+        return x64
+    if x64.dim() != 4 or x64.size(1) != 1:
+        raise ValueError("DDADInputSAFD expects image_64 with shape [B, 1, H, W], got {}".format(tuple(x64.shape)))
+    safd_cfg = ddad_safd["cfg"]
+    decomposer = ddad_safd["decomposer"]
+    input_dtype = x64.dtype
+    with torch.no_grad():
+        band_maps, _, _ = decomposer(x64.float())
+        weighted_bands = band_maps.mean(dim=1)
+        raw = x64.float()
+        safd = weighted_bands.float()
+        if safd_cfg["branch_rms_norm"]:
+            raw = _rms_normalize_image_branch(raw)
+            safd = _rms_normalize_image_branch(safd)
+        mixed = safd_cfg["raw_weight"] * raw + safd_cfg["safd_weight"] * safd
+        return torch.clamp(mixed, -1.0, 1.0).to(dtype=input_dtype)
+
+
 def _autocast_context(enabled):
     if not enabled:
         return nullcontext()
@@ -998,12 +1093,15 @@ def _clone_frozen_module(module, device):
 
 
 def _clone_extractor_to_device(extractor, device):
+    ddad_safd_cfg = extractor.get("ddad_safd_cfg")
     cloned = {
         "device": device,
         "module_a": [_clone_frozen_module(model, device) for model in extractor["module_a"]],
         "module_b": [_clone_frozen_module(model, device) for model in extractor["module_b"]],
         "clip_model": _clone_frozen_module(extractor["clip_model"], device),
         "has_diffusion": bool(extractor.get("has_diffusion", False)),
+        "ddad_safd_cfg": ddad_safd_cfg,
+        "ddad_safd": _build_ddad_input_safd_context_from_cfg(ddad_safd_cfg, device) if ddad_safd_cfg is not None else None,
     }
     if cloned["has_diffusion"]:
         cloned["diff_a_model"] = _clone_frozen_module(extractor["diff_a_model"], device)
@@ -1393,6 +1491,8 @@ def _gather_components(cfgs, device):
     else:
         diff_a_model, diff_b_model = None, None
     clip_model = _load_clip_model(cfgs, device)
+    ddad_safd_cfg = _get_ddad_input_safd_cfg(cfgs)
+    ddad_safd = _build_ddad_input_safd_context_from_cfg(ddad_safd_cfg, device)
     primary_extractor = {
         "device": device,
         "module_a": module_a,
@@ -1401,6 +1501,8 @@ def _gather_components(cfgs, device):
         "diff_b_model": diff_b_model,
         "clip_model": clip_model,
         "has_diffusion": has_diffusion,
+        "ddad_safd_cfg": ddad_safd_cfg,
+        "ddad_safd": ddad_safd,
     }
 
     extractor_gpu_ids = _get_gpu_ids(cfgs)
@@ -2871,9 +2973,12 @@ def _apply_fusion_clip_dropout(fusion_inputs, band_cfg):
     return dropped_inputs
 
 
-def _compute_ddad_branch_features(x64, cfgs, module_a, module_b):
+def _compute_ddad_branch_features(x64, cfgs, module_a, module_b, ddad_safd=None):
     network = cfgs["Model"]["network"]
     topk_ratio = _get_ensemble_cfg(cfgs)["real_score_topk_ratio"]
+    if ddad_safd is None:
+        ddad_safd = _build_ddad_input_safd_context(cfgs, x64.device)
+    x64 = _apply_ddad_input_safd(x64, ddad_safd)
     outputs_a, outputs_b = [], []
     uncertainties = []
 
@@ -2943,8 +3048,9 @@ def _compute_refined_ddad_features(
     refine_net,
     refine_in,
     refine_runtime_cfg,
+    ddad_safd=None,
 ):
-    ddad_features = _compute_ddad_branch_features(x64, cfgs, module_a, module_b)
+    ddad_features = _compute_ddad_branch_features(x64, cfgs, module_a, module_b, ddad_safd=ddad_safd)
     net_in = build_refine_input(
         ddad_features["inter_img"],
         ddad_features["intra_img"],
@@ -3032,6 +3138,7 @@ def _compute_all_branch_features(batch, cfgs, components, amp_enabled=False, ret
             cfgs,
             components["module_a"],
             components["module_b"],
+            ddad_safd=components.get("ddad_safd"),
         )
         if has_diffusion:
             diffusion_features = _compute_diffusion_branch_features(
@@ -4098,6 +4205,7 @@ def _run_clip_student_balanced_epoch(
     ddad_map_loss_weight,
     safd_aux=None,
     safd_aux_weight=0.0,
+    ddad_safd=None,
 ):
     total_meter = AverageMeter()
     clean_meter = AverageMeter()
@@ -4158,6 +4266,7 @@ def _run_clip_student_balanced_epoch(
                     refine_net,
                     refine_in,
                     refine_runtime_cfg,
+                    ddad_safd=ddad_safd,
                 )["refined_map"].float()
 
         optimizer.zero_grad(set_to_none=True)
@@ -4325,6 +4434,7 @@ def _run_clip_student_fusion_pseudo_epoch(
     clip_aux_loss_weight,
     ddad_map_loss_weight,
     bg_weight,
+    ddad_safd=None,
 ):
     total_meter = AverageMeter()
     fused_meter = AverageMeter()
@@ -4356,6 +4466,7 @@ def _run_clip_student_fusion_pseudo_epoch(
                 refine_net,
                 refine_in,
                 refine_runtime_cfg,
+                ddad_safd=ddad_safd,
             )
         with _autocast_context(amp_enabled):
             outputs = model(
@@ -4405,7 +4516,7 @@ def _run_clip_student_fusion_pseudo_epoch(
     }
 
 
-def _run_weak_ddad_train_epoch(loader, model, network, optimizer, entropy_loss_weight=0.0):
+def _run_weak_ddad_train_epoch(loader, model, network, optimizer, entropy_loss_weight=0.0, ddad_safd=None):
     total_meter = AverageMeter()
     rec_meter = AverageMeter()
     aux_meter = AverageMeter()
@@ -4413,6 +4524,7 @@ def _run_weak_ddad_train_epoch(loader, model, network, optimizer, entropy_loss_w
     entropy_criterion = EntropyLossEncap() if network == "MemAE" else None
     for batch in loader:
         x64 = _move_tensor(batch["image_64"], next(model.parameters()).device)
+        x64 = _apply_ddad_input_safd(x64, ddad_safd)
         optimizer.zero_grad(set_to_none=True)
         if network == "AE":
             reconstruction = model(x64)
@@ -4448,12 +4560,13 @@ def _run_weak_ddad_train_epoch(loader, model, network, optimizer, entropy_loss_w
     }
 
 
-def _evaluate_single_ddad_reconstruction(loader, model, network, device):
+def _evaluate_single_ddad_reconstruction(loader, model, network, device, ddad_safd=None):
     rec_losses = []
     model.eval()
     with torch.no_grad():
         for batch in loader:
             x64 = _move_tensor(batch["image_64"], device)
+            x64 = _apply_ddad_input_safd(x64, ddad_safd)
             if network == "AE":
                 reconstruction = model(x64)
                 rec_err = (reconstruction - x64) ** 2
@@ -4474,12 +4587,12 @@ def _evaluate_single_ddad_reconstruction(loader, model, network, device):
     return float(np.mean(rec_losses))
 
 
-def _collect_ddad_score_rows(loader, cfgs, module_a, module_b, device):
+def _collect_ddad_score_rows(loader, cfgs, module_a, module_b, device, ddad_safd=None):
     rows = []
     with torch.no_grad():
         for batch in loader:
             x64 = _move_tensor(batch["image_64"], device)
-            ddad_features = _compute_ddad_branch_features(x64, cfgs, module_a, module_b)
+            ddad_features = _compute_ddad_branch_features(x64, cfgs, module_a, module_b, ddad_safd=ddad_safd)
             ddad_scores = ddad_features["score"].view(-1).detach().cpu().numpy().tolist()
             inter_scores = ddad_features["inter_score"].view(-1).detach().cpu().numpy().tolist()
             intra_scores = ddad_features["intra_score"].view(-1).detach().cpu().numpy().tolist()
@@ -4515,7 +4628,7 @@ def _collect_ddad_score_rows(loader, cfgs, module_a, module_b, device):
     return rows
 
 
-def _collect_refined_ddad_score_rows(loader, cfgs, module_a, module_b, refine_net, refine_in, refine_runtime_cfg, device):
+def _collect_refined_ddad_score_rows(loader, cfgs, module_a, module_b, refine_net, refine_in, refine_runtime_cfg, device, ddad_safd=None):
     rows = []
     with torch.no_grad():
         for batch in loader:
@@ -4528,6 +4641,7 @@ def _collect_refined_ddad_score_rows(loader, cfgs, module_a, module_b, refine_ne
                 refine_net,
                 refine_in,
                 refine_runtime_cfg,
+                ddad_safd=ddad_safd,
             )
             refined_scores = features["refined_score"].view(-1).detach().cpu().numpy().tolist()
             refined_quality = _refined_map_quality_metrics(features["refined_map"])
@@ -4576,6 +4690,7 @@ def _evaluate_weak_refine_loader(
     refine_in,
     refine_runtime_cfg,
     device,
+    ddad_safd=None,
 ):
     rows = []
     with torch.no_grad():
@@ -4590,6 +4705,7 @@ def _evaluate_weak_refine_loader(
                 refine_net,
                 refine_in,
                 refine_runtime_cfg,
+                ddad_safd=ddad_safd,
             )
             scores = features["refined_score"].view(-1).detach().cpu().numpy().tolist()
             fallback_labels = batch["label_img"].view(-1).detach().cpu().numpy().tolist()
@@ -4668,6 +4784,14 @@ def train_weak_ddad_module(cfgs, mode):
     weight_decay = float(solver_cfg.get("weight_decay", 0.0))
     entropy_loss_weight = float(model_cfg.get("entropy_loss_weight", 0.0002))
     subset = "clean_plus_unlabeled_train_pool" if mode == "weak_a" else "clean_train_normal"
+    ddad_safd = _build_ddad_input_safd_context(cfgs, device)
+    ddad_safd_summary = _ddad_input_safd_summary(ddad_safd)
+    print(
+        "=> DDADInputSAFD enabled={enabled} mode={mode} raw_weight={raw_weight:.4f} "
+        "safd_weight={safd_weight:.4f} levels={levels} patch_size={patch_size}".format(
+            **ddad_safd_summary
+        )
+    )
 
     train_loader = _build_multibranch_loader(
         cfgs,
@@ -4736,8 +4860,9 @@ def train_weak_ddad_module(cfgs, mode):
                 network,
                 optimizer,
                 entropy_loss_weight=entropy_loss_weight,
+                ddad_safd=ddad_safd,
             )
-            clean_val_loss = _evaluate_single_ddad_reconstruction(clean_val_loader, model, network, device)
+            clean_val_loss = _evaluate_single_ddad_reconstruction(clean_val_loader, model, network, device, ddad_safd=ddad_safd)
             writer.add_scalar("train_total", train_stats["total"], epoch)
             writer.add_scalar("train_rec", train_stats["rec"], epoch)
             writer.add_scalar("train_aux", train_stats["aux"], epoch)
@@ -4748,6 +4873,7 @@ def train_weak_ddad_module(cfgs, mode):
                 "train_total": train_stats["total"],
                 "train_rec": train_stats["rec"],
                 "train_aux": train_stats["aux"],
+                "ddad_input_safd": ddad_safd_summary,
             }
             _save_checkpoint(checkpoint_paths["last"], model, optimizer, extra=checkpoint_extra)
             if clean_val_loss < best_clean_val:
@@ -4793,7 +4919,7 @@ def train_weak_ddad_module(cfgs, mode):
         cache_clip_images_override=False,
         dataset_kwargs=dataset_kwargs,
     )
-    ddad_rows = _collect_ddad_score_rows(unlabeled_val_loader, cfgs, module_a, module_b, device)
+    ddad_rows = _collect_ddad_score_rows(unlabeled_val_loader, cfgs, module_a, module_b, device, ddad_safd=ddad_safd)
     ddad_metrics = _hidden_label_metrics_from_rows(ddad_rows, score_key="ddad_score")
     debug_path = os.path.join(_checkpoint_out_dir(cfgs), "weak_ddad_hidden_debug.json")
     with open(debug_path, "w") as f:
@@ -4825,6 +4951,8 @@ def train_weak_refine_module(cfgs, refine_in=None):
     module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
     module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
     refine_net, refine_runtime_cfg, refine_in_channels = _build_weak_refine_model(cfgs, device, refine_in)
+    ddad_safd = _build_ddad_input_safd_context(cfgs, device)
+    ddad_safd_summary = _ddad_input_safd_summary(ddad_safd)
     optimizer = torch.optim.Adam(
         refine_net.parameters(),
         lr=solver_cfg["lr"],
@@ -4873,11 +5001,12 @@ def train_weak_refine_module(cfgs, refine_in=None):
     )
     print(
         "=> Training weak_r refine: band_mode={} in_channels={} effective_refine_channels={} topk={:.2%} "
-        "checkpoint={}".format(
+        "DDADInputSAFD={} checkpoint={}".format(
             refine_runtime_cfg["band_mode"],
             refine_in_channels,
             effective_refine_channels,
             refine_runtime_cfg["score_topk_ratio"],
+            ddad_safd_summary["enabled"],
             checkpoint_path,
         )
     )
@@ -4890,7 +5019,7 @@ def train_weak_refine_module(cfgs, refine_in=None):
             x64 = _move_tensor(batch["image_64"], device)
             mask_syn = _move_tensor(batch["mask_syn"].long(), device)
             with torch.no_grad():
-                ddad_features = _compute_ddad_branch_features(x64, cfgs, module_a, module_b)
+                ddad_features = _compute_ddad_branch_features(x64, cfgs, module_a, module_b, ddad_safd=ddad_safd)
                 net_in = build_refine_input(
                     ddad_features["inter_img"],
                     ddad_features["intra_img"],
@@ -4915,6 +5044,7 @@ def train_weak_refine_module(cfgs, refine_in=None):
             refine_in,
             refine_runtime_cfg,
             device,
+            ddad_safd=ddad_safd,
         )
         auc = float(metrics["auc"])
         ap = float(metrics["ap"])
@@ -4945,6 +5075,7 @@ def train_weak_refine_module(cfgs, refine_in=None):
             "in_channels": int(refine_in_channels),
             "effective_refine_channels": int(effective_refine_channels),
             "score_topk_ratio": refine_runtime_cfg["score_topk_ratio"],
+            "ddad_input_safd": ddad_safd_summary,
         }
         _save_checkpoint(checkpoint_path.replace(".pth", "_last.pth"), refine_net, optimizer, extra=checkpoint_extra)
         if auc >= best_auc:
@@ -4999,6 +5130,8 @@ def evaluate_weak_refine_module(cfgs, refine_in=None):
     module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
     module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
     refine_net, refine_runtime_cfg, refine_in_channels = _load_weak_refine_model(cfgs, device, refine_in)
+    ddad_safd = _build_ddad_input_safd_context(cfgs, device)
+    ddad_safd_summary = _ddad_input_safd_summary(ddad_safd)
     effective_refine_channels = infer_refine_in_channels(
         refine_in,
         use_fixed_3band=refine_runtime_cfg["use_fixed_3band"],
@@ -5020,11 +5153,12 @@ def evaluate_weak_refine_module(cfgs, refine_in=None):
     )
     print(
         "=> eval_weak_r preprocess: band_mode={} in_channels={} effective_refine_channels={} "
-        "score_topk_ratio={:.2%}".format(
+        "score_topk_ratio={:.2%} DDADInputSAFD={}".format(
             refine_runtime_cfg["band_mode"],
             refine_in_channels,
             effective_refine_channels,
             refine_runtime_cfg["score_topk_ratio"],
+            ddad_safd_summary["enabled"],
         )
     )
     metrics, rows = _evaluate_weak_refine_loader(
@@ -5036,6 +5170,7 @@ def evaluate_weak_refine_module(cfgs, refine_in=None):
         refine_in,
         refine_runtime_cfg,
         device,
+        ddad_safd=ddad_safd,
     )
     output_dir = _checkpoint_out_dir(cfgs)
     rows_path = os.path.join(output_dir, "eval_weak_r_scores.csv")
@@ -5289,11 +5424,12 @@ def score_unlabeled_with_teacher(cfgs):
     model.eval()
     weak_module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
     weak_module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
+    ddad_safd = _build_ddad_input_safd_context(cfgs, device)
 
     train_rows = _collect_clip_score_rows(train_loader, model, device, amp_enabled=amp_enabled)
     val_rows = _collect_clip_score_rows(val_loader, model, device, amp_enabled=amp_enabled)
-    train_ddad_rows = _collect_ddad_score_rows(train_loader, cfgs, weak_module_a, weak_module_b, device)
-    val_ddad_rows = _collect_ddad_score_rows(val_loader, cfgs, weak_module_a, weak_module_b, device)
+    train_ddad_rows = _collect_ddad_score_rows(train_loader, cfgs, weak_module_a, weak_module_b, device, ddad_safd=ddad_safd)
+    val_ddad_rows = _collect_ddad_score_rows(val_loader, cfgs, weak_module_a, weak_module_b, device, ddad_safd=ddad_safd)
     train_refined_rows = []
     val_refined_rows = []
     if weak_cfg["use_refine_score"]:
@@ -5308,6 +5444,7 @@ def score_unlabeled_with_teacher(cfgs):
             refine_in,
             refine_runtime_cfg,
             device,
+            ddad_safd=ddad_safd,
         )
         val_refined_rows = _collect_refined_ddad_score_rows(
             val_loader,
@@ -5318,6 +5455,7 @@ def score_unlabeled_with_teacher(cfgs):
             refine_in,
             refine_runtime_cfg,
             device,
+            ddad_safd=ddad_safd,
         )
 
     train_df = pd.DataFrame(train_rows)
@@ -5806,11 +5944,13 @@ def _train_clip_student_balanced_ddad(cfgs):
     refine_net = None
     refine_in = ["inter_dis", "intra_dis"]
     refine_runtime_cfg = None
+    ddad_safd = None
     if ddad_map_loss_weight > 0.0:
         module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
         module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
         refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
         refine_net.eval()
+        ddad_safd = _build_ddad_input_safd_context(cfgs, device)
 
     model = _build_clip_model(cfgs, device)
     _load_checkpoint(teacher_checkpoint, model, map_location=device)
@@ -5869,6 +6009,7 @@ def _train_clip_student_balanced_ddad(cfgs):
             ddad_map_loss_weight,
             safd_aux=safd_aux,
             safd_aux_weight=safd_aux_weight,
+            ddad_safd=ddad_safd,
         )
         clean_stats = _evaluate_clip_score_stats(
             clean_val_loader,
@@ -6359,6 +6500,7 @@ def train_clip_student_fusion(cfgs):
     refine_in = ["inter_dis", "intra_dis"]
     refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
     refine_net.eval()
+    ddad_safd = _build_ddad_input_safd_context(cfgs, device)
 
     model = _build_clip_model(cfgs, device)
     init_stage = weak_cfg["student_fusion_init_stage"]
@@ -6447,6 +6589,7 @@ def train_clip_student_fusion(cfgs):
             effective_clip_aux_loss_weight,
             ddad_map_loss_weight,
             bg_weight,
+            ddad_safd=ddad_safd,
         )
         model.eval()
         fusion_head.eval()
@@ -6474,6 +6617,7 @@ def train_clip_student_fusion(cfgs):
             device,
             amp_enabled=amp_enabled,
             label_key="hidden_label",
+            ddad_safd=ddad_safd,
         )
         _, fused_validation_metrics = _score_student_fusion_rows(validation_rows, fusion_head, device, weak_cfg)
         if int(fused_validation_metrics["count"]) == 0:
@@ -6493,6 +6637,7 @@ def train_clip_student_fusion(cfgs):
             refine_runtime_cfg,
             device,
             amp_enabled=amp_enabled,
+            ddad_safd=ddad_safd,
         )
         clean_scored_df, _ = _score_student_fusion_rows(clean_rows, fusion_head, device, weak_cfg)
         fused_clean_scores = clean_scored_df["fusion_score"].astype(float).tolist() if len(clean_scored_df) > 0 else []
@@ -6592,6 +6737,7 @@ def _collect_student_fusion_eval_rows(
     device,
     amp_enabled=False,
     label_key="label_img",
+    ddad_safd=None,
 ):
     rows = []
     with torch.no_grad():
@@ -6608,6 +6754,7 @@ def _collect_student_fusion_eval_rows(
                 refine_net,
                 refine_in,
                 refine_runtime_cfg,
+                ddad_safd=ddad_safd,
             )
             with _autocast_context(amp_enabled):
                 outputs = model(
@@ -6749,6 +6896,7 @@ def evaluate_clip_student_fusion_official(cfgs):
     module_a = _load_weak_ddad_ensemble(cfgs, "weak_a")
     module_b = _load_weak_ddad_ensemble(cfgs, "weak_b")
     refine_net, refine_runtime_cfg, _ = _load_weak_refine_model(cfgs, device, refine_in)
+    ddad_safd = _build_ddad_input_safd_context(cfgs, device)
     rows = _collect_student_fusion_eval_rows(
         official_test_loader,
         cfgs,
@@ -6760,6 +6908,7 @@ def evaluate_clip_student_fusion_official(cfgs):
         refine_runtime_cfg,
         device,
         amp_enabled=amp_enabled,
+        ddad_safd=ddad_safd,
     )
     scored_df, fusion_metrics = _score_student_fusion_rows(rows, fusion_head, device, weak_cfg)
     labels = scored_df["label"].astype(int).tolist() if len(scored_df) > 0 else []
