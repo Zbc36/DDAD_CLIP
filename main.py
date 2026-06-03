@@ -4,7 +4,6 @@ from test import evaluate, test_rec, evaluate_r
 from argparse import ArgumentParser
 from multibranch_runtime import (
     cache_fusion_features,
-    build_safd_normal_bank,
     evaluate_clip_only,
     evaluate_clip_official,
     evaluate_all_modules,
@@ -50,7 +49,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument('--config', dest='config', type=str, default="config/RSNA_AE.yaml")  # config file
     parser.add_argument('--mode', dest='mode', type=str, default=None,
-                        help="e.g., a, b, r, eval, eval_r, test, diff_a, diff_b, clip, clip_teacher, weak_a, weak_b, weak_r, eval_weak_r, safd_bank, score_unlabeled, select_pseudo, clip_student, clip_student_fusion, eval_clip_official, eval_clip_student_fusion, cache_fusion, fusion, eval_all, export_real_vis")
+                        help="e.g., a, b, r, eval, eval_r, test, diff_a, diff_b, clip, clip_teacher, weak_a, weak_b, weak_r, eval_weak_r, score_unlabeled, select_pseudo, clip_student, clip_student_fusion, eval_clip_official, eval_clip_student_fusion, cache_fusion, fusion, eval_all, export_real_vis")
     parser.add_argument('--refine', dest='refine_in', type=str, default="dual", help="dual, intra")
 
     """
@@ -123,9 +122,6 @@ if __name__ == "__main__":
     elif opt.mode == "eval_weak_r":
         print("=> Evaluating the weak DDAD refine branch ...")
         evaluate_weak_refine_module(cfgs, refine_in)
-    elif opt.mode == "safd_bank":
-        print("=> Building the SAFD clean-normal bank ...")
-        build_safd_normal_bank(cfgs, refine_in)
     elif opt.mode == "score_unlabeled":
         print("=> Scoring unlabeled pools with the CLIP teacher ...")
         score_unlabeled_with_teacher(cfgs)

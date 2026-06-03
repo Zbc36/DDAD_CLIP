@@ -50,7 +50,8 @@ RefineSolver:
   weight_decay: 0.0
   num_epoch: 250
   grad_clip: Null
-  band_mode: "fixed_3band"
+#  band_mode: "fixed_3band"
+  band_mode: "none"
   score_topk_ratio: 0.01
 
 CLIP:
@@ -66,7 +67,7 @@ CLIP:
   cache_clip_images: false
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  num_epoch: 10
+  num_epoch: 15
   backbone_name: "ViT-L-14-336"
   pretrained: "openai"
   offline_pretrained: true
@@ -83,6 +84,13 @@ CLIP:
   image_loss_weight: 1.0
   dice_loss_weight: 0.5
   amp: true
+  safd_aux_enabled: false
+  safd_aux_mode: "mean_bands"
+  safd_aux_loss_weight: 0.005
+  safd_aux_student_loss_weight: 0.002
+  safd_aux_levels: 3
+  safd_aux_patch_size: 16
+  safd_aux_seed: 3407
 
 WeakCLIP:
   group_key: "auto"
@@ -103,8 +111,12 @@ WeakCLIP:
   pseudo_selection_mode: "balanced_topup"
   student_use_synthetic_cls: false
   student_experiment_name: "clip_student_balanced_ddad_v1"
-  student_fusion_experiment_name: "clip_student_fusion_balanced_ddadmap_v1"
+#  student_fusion_experiment_name: "clip_student_fusion_balanced_ddadmap_v1"
+  student_fusion_experiment_name: "clip_student_fusion_11dim_same_run"
   student_checkpoint_metric: "labeled_val_auc_ap"
+  student_checkpoint_auc_weight: 1.5
+  student_checkpoint_clean_penalty_threshold: 0.07
+  student_checkpoint_clean_penalty_weight: 0.25
   student_validation_subset: "unlabeled_val_pool"
   pseudo_topup_normal_target: 0.05
   pseudo_topup_normal_weight_scale: 0.75
@@ -125,26 +137,11 @@ WeakCLIP:
   student_fusion_dropout: 0.1
   use_refine_score: true
   refine_checkpoint: "weak_refine_dual"
-  use_safd_score: false
-  safd_levels: 3
-  safd_patch_size: 4
-  safd_topk_ratio: 0.01
-  safd_lambda_repulsion: 1.0e-8
-  safd_seed: 3407
-  safd_score_mode: "normal_bank"
-  safd_fusion_mode: "agreement"
-  safd_apply_scope: "topup_only"
-  safd_normal_reduce: "max"
-  safd_normal_mad_eps: 1.0e-4
   refined_ddad_joint_weight: 0.70
-  safd_joint_weight: 0.0
   clip_joint_weight: 0.20
   localization_joint_weight: 0.10
-  topup_abnormal_base_weight: 0.75
-  topup_abnormal_safd_weight: 0.25
   pseudo_topup_abnormal_min_target: 0.75
   pseudo_topup_abnormal_weight_scale: 0.4
-  pseudo_topup_abnormal_use_safd_gate: true
   teacher_clean_loss_weight: 1.0
   teacher_synthetic_cls_weight: 0.10
   teacher_bg_suppression_weight: 0.01

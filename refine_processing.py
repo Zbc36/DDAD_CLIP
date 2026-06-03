@@ -70,13 +70,14 @@ def build_refine_input(inter_dis, intra_dis, refine_in, use_fixed_3band=True):
     if len(selected_maps) == 0:
         raise ValueError("refine_in must request at least one discrepancy map.")
 
-    if not use_fixed_3band:
-        return torch.cat(selected_maps, dim=1).contiguous()
+    input_maps = []
+    if use_fixed_3band:
+        for discrepancy_map in selected_maps:
+            input_maps.extend(fixed_three_band_decomposition(discrepancy_map))
+    else:
+        input_maps.extend(selected_maps)
 
-    band_maps = []
-    for discrepancy_map in selected_maps:
-        band_maps.extend(fixed_three_band_decomposition(discrepancy_map))
-    return torch.cat(band_maps, dim=1).contiguous()
+    return torch.cat(input_maps, dim=1).contiguous()
 
 
 def topk_mean_score(score_map, ratio):
