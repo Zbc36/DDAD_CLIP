@@ -1,5 +1,5 @@
 Exp:
-  out_dir: "output/AEU/Vin_CLIP_Weak/"
+  out_dir: "output/AEU/Vin_ContamStudy/base/"
   gpu: 3
   gpu_ids: [3]
 
@@ -27,6 +27,12 @@ Data:
   prefetch_factor: 4
   pin_memory: true
   cache_images: true
+  contamination_study_enabled: true
+  unlabeled_train_total: 4000
+  unlabeled_train_abnormal_ratio: 0.00
+  unlabeled_train_sample_seed: 3407
+  unlabeled_train_sample_strict: true
+  contamination_affects_val: false
   synthetic_mode_probs:
     copy_paste: 0.4
     intensity_shift: 0.2
@@ -50,7 +56,6 @@ RefineSolver:
   weight_decay: 0.0
   num_epoch: 125
   grad_clip: Null
-#  band_mode: "fixed_3band"
   band_mode: "none"
   score_topk_ratio: 0.01
 
@@ -123,9 +128,8 @@ WeakCLIP:
   student_training_mode: "balanced_ddad"
   pseudo_selection_mode: "balanced_topup"
   student_use_synthetic_cls: false
-  student_experiment_name: "clip_student_balanced_ddad_v1"
-#  student_fusion_experiment_name: "clip_student_fusion_balanced_ddadmap_v1"
-  student_fusion_experiment_name: "clip_student_fusion_11dim_same_run"
+  student_experiment_name: "clip_student_contamination_study"
+  student_fusion_experiment_name: "clip_student_fusion_contamination_study"
   student_checkpoint_metric: "labeled_val_auc_ap"
   student_checkpoint_auc_weight: 1.5
   student_checkpoint_clean_penalty_threshold: 0.07
@@ -134,11 +138,9 @@ WeakCLIP:
   pseudo_topup_normal_target: 0.05
   pseudo_topup_normal_weight_scale: 0.75
   pseudo_topup_normal_percentile_max: 0.20
+  allow_zero_abnormal_pseudo: true
+  normal_only_fusion_enabled: true
   pseudo_soft_target_enabled: false
-#  pseudo_soft_abnormal_min: 0.90
-#  pseudo_soft_abnormal_max: 0.98
-#  pseudo_soft_normal_min: 0.02
-#  pseudo_soft_normal_max: 0.10
   student_pseudo_loss_weight: 0.2
   student_clean_loss_weight: 0.8
   student_pseudo_loc_weight: 0.05

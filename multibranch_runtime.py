@@ -120,6 +120,18 @@ def _get_data_cfg(cfgs):
     return data_cfg
 
 
+def _get_contamination_study_cfg(cfgs):
+    data_cfg = _get_data_cfg(cfgs)
+    return {
+        "enabled": bool(data_cfg.get("contamination_study_enabled", False)),
+        "unlabeled_train_total": data_cfg.get("unlabeled_train_total", None),
+        "unlabeled_train_abnormal_ratio": float(data_cfg.get("unlabeled_train_abnormal_ratio", 0.0)),
+        "unlabeled_train_sample_seed": int(data_cfg.get("unlabeled_train_sample_seed", 3407)),
+        "unlabeled_train_sample_strict": bool(data_cfg.get("unlabeled_train_sample_strict", True)),
+        "contamination_affects_val": bool(data_cfg.get("contamination_affects_val", False)),
+    }
+
+
 def _build_multibranch_loader(
     cfgs,
     subset,
@@ -234,6 +246,10 @@ def _get_weakclip_cfg(cfgs):
     bottom_ratio = float(weak_cfg.get("pseudo_bottom_normal_ratio", 0.10))
     normal_min_relative = float(weak_cfg.get("pseudo_normal_min_relative_to_abnormal", 0.70))
     normal_target_relative = float(weak_cfg.get("pseudo_normal_target_relative_to_abnormal", 1.0))
+    pseudo_soft_abnormal_min = float(weak_cfg.get("pseudo_soft_abnormal_min", 0.75))
+    pseudo_soft_abnormal_max = float(weak_cfg.get("pseudo_soft_abnormal_max", 0.95))
+    pseudo_soft_normal_min = float(weak_cfg.get("pseudo_soft_normal_min", 0.05))
+    pseudo_soft_normal_max = float(weak_cfg.get("pseudo_soft_normal_max", 0.25))
     if not 0.0 < top_ratio < 1.0:
         raise ValueError("WeakCLIP.pseudo_top_abnormal_ratio must be in (0, 1), got {}".format(top_ratio))
     if not 0.0 < bottom_ratio < 1.0:
@@ -261,6 +277,20 @@ def _get_weakclip_cfg(cfgs):
         raise ValueError(
             "WeakCLIP.pseudo_selection_mode must be 'legacy_stable' or 'balanced_topup', got '{}'".format(
                 pseudo_selection_mode
+            )
+        )
+    if not 0.5 < pseudo_soft_abnormal_min <= pseudo_soft_abnormal_max < 1.0:
+        raise ValueError(
+            "WeakCLIP pseudo soft abnormal range must satisfy 0.5 < min <= max < 1.0, got {}..{}".format(
+                pseudo_soft_abnormal_min,
+                pseudo_soft_abnormal_max,
+            )
+        )
+    if not 0.0 < pseudo_soft_normal_min <= pseudo_soft_normal_max < 0.5:
+        raise ValueError(
+            "WeakCLIP pseudo soft normal range must satisfy 0.0 < min <= max < 0.5, got {}..{}".format(
+                pseudo_soft_normal_min,
+                pseudo_soft_normal_max,
             )
         )
     return {
@@ -297,6 +327,12 @@ def _get_weakclip_cfg(cfgs):
         "pseudo_topup_normal_target": float(weak_cfg.get("pseudo_topup_normal_target", 0.05)),
         "pseudo_topup_normal_weight_scale": float(weak_cfg.get("pseudo_topup_normal_weight_scale", 0.75)),
         "pseudo_topup_normal_percentile_max": float(weak_cfg.get("pseudo_topup_normal_percentile_max", 0.20)),
+        "allow_zero_abnormal_pseudo": bool(weak_cfg.get("allow_zero_abnormal_pseudo", False)),
+        "pseudo_soft_target_enabled": bool(weak_cfg.get("pseudo_soft_target_enabled", False)),
+        "pseudo_soft_abnormal_min": pseudo_soft_abnormal_min,
+        "pseudo_soft_abnormal_max": pseudo_soft_abnormal_max,
+        "pseudo_soft_normal_min": pseudo_soft_normal_min,
+        "pseudo_soft_normal_max": pseudo_soft_normal_max,
         "student_fusion_loss_weight": float(weak_cfg.get("student_fusion_loss_weight", 1.0)),
         "student_clip_aux_loss_weight": float(weak_cfg.get("student_clip_aux_loss_weight", 0.3)),
         "student_ddad_map_loss_weight": float(weak_cfg.get("student_ddad_map_loss_weight", 0.05)),
@@ -305,6 +341,7 @@ def _get_weakclip_cfg(cfgs):
         "student_fusion_init_stage": str(weak_cfg.get("student_fusion_init_stage", "clip_student")).strip().lower(),
         "student_fusion_init_checkpoint": str(weak_cfg.get("student_fusion_init_checkpoint", "")).strip(),
         "student_fusion_freeze_clip": bool(weak_cfg.get("student_fusion_freeze_clip", True)),
+        "normal_only_fusion_enabled": bool(weak_cfg.get("normal_only_fusion_enabled", True)),
         "use_refine_score": bool(weak_cfg.get("use_refine_score", False)),
         "refine_checkpoint": str(weak_cfg.get("refine_checkpoint", "weak_refine_dual")).strip(),
         "topup_abnormal_base_weight": float(weak_cfg.get("topup_abnormal_base_weight", 0.75)),
@@ -404,10 +441,17 @@ def _baseline_loader_extra_kwargs(cfgs, subset, split_role):
 
 def _weakclip_dataset_kwargs(cfgs):
     weak_cfg = _get_weakclip_cfg(cfgs)
+    contamination_cfg = _get_contamination_study_cfg(cfgs)
     return {
         "clean_val_ratio": weak_cfg["clean_val_ratio"],
         "unlabeled_val_ratio": weak_cfg["unlabeled_val_ratio"],
         "group_key": weak_cfg["group_key"],
+        "contamination_study_enabled": contamination_cfg["enabled"],
+        "unlabeled_train_total": contamination_cfg["unlabeled_train_total"],
+        "unlabeled_train_abnormal_ratio": contamination_cfg["unlabeled_train_abnormal_ratio"],
+        "unlabeled_train_sample_seed": contamination_cfg["unlabeled_train_sample_seed"],
+        "unlabeled_train_sample_strict": contamination_cfg["unlabeled_train_sample_strict"],
+        "contamination_affects_val": contamination_cfg["contamination_affects_val"],
     }
 
 
@@ -417,6 +461,10 @@ def _set_global_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _get_clip_seed(cfgs):
+    return int(_get_section(cfgs, "CLIP").get("seed", 3407))
 
 
 def _weak_ddad_mode_to_dir(mode):
@@ -3068,12 +3116,12 @@ def _compute_refined_ddad_features(
     return outputs
 
 
-STUDENT_FUSION_BASE_DIM = 11
+STUDENT_FUSION_INPUT_DIM = 11
 
 
 def _student_fusion_input_dim(weak_cfg):
     del weak_cfg
-    return STUDENT_FUSION_BASE_DIM
+    return STUDENT_FUSION_INPUT_DIM
 
 
 def _compute_diffusion_branch_features(x64, cfgs, diff_a_model, diff_b_model):
@@ -3601,6 +3649,17 @@ def _weakclip_selection_targets(score, weak_cfg):
     return float(np.clip(target, 1.0e-4, 1.0 - 1.0e-4))
 
 
+def _weakclip_soft_pseudo_target(pseudo_kind, joint_score, weak_cfg):
+    joint_score = float(np.clip(float(joint_score), 0.0, 1.0))
+    if str(pseudo_kind) == "abnormal":
+        target_min = weak_cfg["pseudo_soft_abnormal_min"]
+        target_max = weak_cfg["pseudo_soft_abnormal_max"]
+        return float(target_min + (target_max - target_min) * joint_score)
+    target_min = weak_cfg["pseudo_soft_normal_min"]
+    target_max = weak_cfg["pseudo_soft_normal_max"]
+    return float(target_max - (target_max - target_min) * joint_score)
+
+
 def _joint_confidence_weight(joint_score):
     return float(np.clip(0.2 + 0.8 * float(joint_score), 0.2, 1.0))
 
@@ -3631,6 +3690,14 @@ def _evaluate_hidden_label_metrics(loader, model, device, amp_enabled=False):
 
 
 def _weakclip_checkpoint_score(hidden_metrics, clean_stats):
+    return (
+        float(hidden_metrics.get("auc", 0.0)) +
+        float(hidden_metrics.get("ap", 0.0)) -
+        0.25 * float(clean_stats.get("mean", 0.0))
+    )
+
+
+def _student_fusion_checkpoint_score(hidden_metrics, clean_stats):
     return (
         float(hidden_metrics.get("auc", 0.0)) +
         float(hidden_metrics.get("ap", 0.0)) -
@@ -4393,6 +4460,17 @@ def _prepare_student_pseudo_manifests(manifest_path, experiment_dir):
     return paths, {
         "abnormal_count": int(len(grouped["abnormal"])),
         "normal_count": int(len(grouped["normal"])),
+    }
+
+
+def _pseudo_manifest_counts(manifest_path):
+    df = pd.read_csv(manifest_path)
+    if "pseudo_kind" not in df.columns:
+        raise RuntimeError("Pseudo manifest must contain pseudo_kind.")
+    return {
+        "abnormal_count": int((df["pseudo_kind"].astype(str) == "abnormal").sum()),
+        "normal_count": int((df["pseudo_kind"].astype(str) == "normal").sum()),
+        "total_count": int(len(df)),
     }
 
 
@@ -5195,6 +5273,9 @@ def evaluate_weak_refine_module(cfgs, refine_in=None):
 
 
 def train_clip_teacher(cfgs):
+    clip_seed = _get_clip_seed(cfgs)
+    _set_global_seed(clip_seed)
+    print("=> CLIP seed fixed to {}".format(clip_seed))
     device = _get_device(cfgs)
     clip_cfg = _get_section(cfgs, "CLIP")
     loader_overrides = _get_clip_loader_overrides(cfgs)
@@ -5360,6 +5441,7 @@ def train_clip_teacher(cfgs):
 
         checkpoint_extra = {
             "epoch": epoch,
+            "clip_seed": clip_seed,
             "score": score,
             "train_total": train_stats["total"],
             "train_cls": train_stats["cls"],
@@ -5579,6 +5661,7 @@ def score_unlabeled_with_teacher(cfgs):
 
 def select_pseudo_labels(cfgs):
     weak_cfg = _get_weakclip_cfg(cfgs)
+    contamination_cfg = _get_contamination_study_cfg(cfgs)
     selection_mode = weak_cfg["pseudo_selection_mode"]
     output_paths = _teacher_unlabeled_score_paths(cfgs)
     if not os.path.exists(output_paths["train_scores"]):
@@ -5595,7 +5678,16 @@ def select_pseudo_labels(cfgs):
     if len(train_df) == 0:
         raise RuntimeError("Unlabeled train score file is empty: {}".format(output_paths["train_scores"]))
 
-    abnormal_count = max(1, int(np.ceil(len(train_df) * weak_cfg["pseudo_top_abnormal_ratio"])))
+    normal_only_manifest = bool(
+        weak_cfg["allow_zero_abnormal_pseudo"] and
+        contamination_cfg["enabled"] and
+        contamination_cfg["unlabeled_train_abnormal_ratio"] <= 0.0
+    )
+    if normal_only_manifest:
+        abnormal_count = 0
+    else:
+        abnormal_count = int(np.ceil(len(train_df) * weak_cfg["pseudo_top_abnormal_ratio"]))
+        abnormal_count = max(1, abnormal_count)
     required_columns = {
         "ddad_score",
         "ddad_percentile",
@@ -5633,7 +5725,7 @@ def select_pseudo_labels(cfgs):
     pseudo_abnormal = pseudo_abnormal.nlargest(abnormal_count, "abnormal_joint_score")
     pseudo_abnormal["pseudo_source"] = "strict_abnormal"
     abnormal_topup_count = 0
-    if len(pseudo_abnormal) < abnormal_count:
+    if abnormal_count > 0 and len(pseudo_abnormal) < abnormal_count:
         fill_count = abnormal_count - len(pseudo_abnormal)
         selected_abnormal_ids = set(pseudo_abnormal["img_id"].astype(str).tolist())
         abnormal_fill_pool = train_df[
@@ -5665,14 +5757,18 @@ def select_pseudo_labels(cfgs):
             pseudo_normal = train_df.nlargest(normal_target_count, "normal_joint_score").copy()
             pseudo_normal["pseudo_source"] = "fallback_normal"
     else:
-        normal_target_count = max(
-            1,
-            int(np.ceil(len(pseudo_abnormal) * weak_cfg["pseudo_normal_target_relative_to_abnormal"])),
+        normal_target_count = int(
+            np.ceil(len(pseudo_abnormal) * weak_cfg["pseudo_normal_target_relative_to_abnormal"])
         )
-        normal_min_count = max(
-            1,
-            int(np.ceil(len(pseudo_abnormal) * weak_cfg["pseudo_normal_min_relative_to_abnormal"])),
+        normal_min_count = int(
+            np.ceil(len(pseudo_abnormal) * weak_cfg["pseudo_normal_min_relative_to_abnormal"])
         )
+        if normal_only_manifest:
+            normal_target_count = max(1, int(np.ceil(len(train_df) * weak_cfg["pseudo_bottom_normal_ratio"])))
+            normal_min_count = 0
+        else:
+            normal_target_count = max(1, normal_target_count)
+            normal_min_count = max(1, normal_min_count)
         normal_mask = (
             (train_df["score"].astype(float) <= weak_cfg["pseudo_normal_score_max"]) &
             (train_df["background_consistency"].astype(float) >= val_bg_threshold) &
@@ -5741,6 +5837,13 @@ def select_pseudo_labels(cfgs):
             weight = _joint_confidence_weight(float(row.normal_joint_score))
             if selection_mode == "balanced_topup" and str(getattr(row, "pseudo_source", "")) == "topup_normal":
                 weight = max(0.2, weight * weak_cfg["pseudo_topup_normal_weight_scale"])
+        if weak_cfg["pseudo_soft_target_enabled"]:
+            joint_score = (
+                float(row.abnormal_joint_score)
+                if str(row.pseudo_kind) == "abnormal"
+                else float(row.normal_joint_score)
+            )
+            target = _weakclip_soft_pseudo_target(row.pseudo_kind, joint_score, weak_cfg)
         weight = max(0.05, float(weight))
         pseudo_targets.append(target)
         pseudo_weights.append(weight)
@@ -5798,6 +5901,7 @@ def select_pseudo_labels(cfgs):
             "target_abnormal_count": int(abnormal_count),
             "target_normal_count": int(normal_target_count),
             "minimum_normal_count": int(normal_min_count),
+            "normal_only_manifest": bool(normal_only_manifest),
             "pseudo_normal_target_relative_to_abnormal": weak_cfg["pseudo_normal_target_relative_to_abnormal"],
             "pseudo_normal_min_relative_to_abnormal": weak_cfg["pseudo_normal_min_relative_to_abnormal"],
             "strict_abnormal_candidate_count": strict_abnormal_candidate_count,
@@ -5815,6 +5919,21 @@ def select_pseudo_labels(cfgs):
             "topup_normal_target": weak_cfg["pseudo_topup_normal_target"],
             "topup_normal_weight_scale": weak_cfg["pseudo_topup_normal_weight_scale"],
             "topup_normal_percentile_max": weak_cfg["pseudo_topup_normal_percentile_max"],
+            "pseudo_soft_target_enabled": weak_cfg["pseudo_soft_target_enabled"],
+            "pseudo_soft_abnormal_min": weak_cfg["pseudo_soft_abnormal_min"],
+            "pseudo_soft_abnormal_max": weak_cfg["pseudo_soft_abnormal_max"],
+            "pseudo_soft_normal_min": weak_cfg["pseudo_soft_normal_min"],
+            "pseudo_soft_normal_max": weak_cfg["pseudo_soft_normal_max"],
+            "pseudo_target_mean": float(selected_df["pseudo_target"].astype(float).mean()),
+            "pseudo_target_std": float(selected_df["pseudo_target"].astype(float).std(ddof=0)),
+            "pseudo_target_min": float(selected_df["pseudo_target"].astype(float).min()),
+            "pseudo_target_max": float(selected_df["pseudo_target"].astype(float).max()),
+            "abnormal_target_mean": float(
+                selected_df[selected_df["pseudo_kind"] == "abnormal"]["pseudo_target"].astype(float).mean()
+            ),
+            "normal_target_mean": float(
+                selected_df[selected_df["pseudo_kind"] == "normal"]["pseudo_target"].astype(float).mean()
+            ),
         },
         "unlabeled_val_distribution": _score_distribution_summary(val_df.to_dict("records")),
         "selected_train_distribution": _score_distribution_summary(
@@ -5862,6 +5981,9 @@ def select_pseudo_labels(cfgs):
 
 
 def _train_clip_student_balanced_ddad(cfgs):
+    clip_seed = _get_clip_seed(cfgs)
+    _set_global_seed(clip_seed)
+    print("=> CLIP seed fixed to {}".format(clip_seed))
     device = _get_device(cfgs)
     clip_cfg = _get_section(cfgs, "CLIP")
     loader_overrides = _get_clip_loader_overrides(cfgs)
@@ -6074,6 +6196,7 @@ def _train_clip_student_balanced_ddad(cfgs):
 
         checkpoint_extra = {
             "epoch": epoch,
+            "clip_seed": clip_seed,
             "selection_score": selection_score,
             "selection_metric": "student_checkpoint_auc_weight * labeled_val_auc + labeled_val_ap - student_checkpoint_clean_penalty_weight * max(0, clean_score_mean - student_checkpoint_clean_penalty_threshold)",
             "student_checkpoint_auc_weight": weak_cfg["student_checkpoint_auc_weight"],
@@ -6096,6 +6219,13 @@ def _train_clip_student_balanced_ddad(cfgs):
             "clean_score_std": clean_stats["std"],
             "pseudo_counts": pseudo_counts,
             "pseudo_coverage": pseudo_coverage,
+            "pseudo_soft_target_enabled": weak_cfg["pseudo_soft_target_enabled"],
+            "pseudo_soft_target_range": {
+                "abnormal_min": weak_cfg["pseudo_soft_abnormal_min"],
+                "abnormal_max": weak_cfg["pseudo_soft_abnormal_max"],
+                "normal_min": weak_cfg["pseudo_soft_normal_min"],
+                "normal_max": weak_cfg["pseudo_soft_normal_max"],
+            },
             "initialization_checkpoint": teacher_checkpoint,
             "trainable_parameters": (
                 "det_adapters+seg_adapters+prompt_tokens+logit_scale"
@@ -6121,6 +6251,9 @@ def _train_clip_student_balanced_ddad(cfgs):
 
 
 def _train_clip_student_legacy_stable(cfgs):
+    clip_seed = _get_clip_seed(cfgs)
+    _set_global_seed(clip_seed)
+    print("=> CLIP seed fixed to {}".format(clip_seed))
     device = _get_device(cfgs)
     clip_cfg = _get_section(cfgs, "CLIP")
     loader_overrides = _get_clip_loader_overrides(cfgs)
@@ -6348,6 +6481,7 @@ def _train_clip_student_legacy_stable(cfgs):
         )
         checkpoint_extra = {
             "epoch": epoch,
+            "clip_seed": clip_seed,
             "student_training_mode": "legacy_stable",
             "pseudo_selection_mode": weak_cfg["pseudo_selection_mode"],
             "selection_score": selection_score,
@@ -6376,6 +6510,13 @@ def _train_clip_student_legacy_stable(cfgs):
             "val_count": validation_metrics["count"],
             "clean_score_mean": clean_stats["mean"],
             "clean_score_std": clean_stats["std"],
+            "pseudo_soft_target_enabled": weak_cfg["pseudo_soft_target_enabled"],
+            "pseudo_soft_target_range": {
+                "abnormal_min": weak_cfg["pseudo_soft_abnormal_min"],
+                "abnormal_max": weak_cfg["pseudo_soft_abnormal_max"],
+                "normal_min": weak_cfg["pseudo_soft_normal_min"],
+                "normal_max": weak_cfg["pseudo_soft_normal_max"],
+            },
             "initialization_checkpoint": teacher_checkpoint,
             "trainable_parameters": "det_adapters+seg_adapters+prompt_tokens+logit_scale",
             "validation_labels_used_for_selection": True,
@@ -6397,7 +6538,14 @@ def _train_clip_student_legacy_stable(cfgs):
 
 
 def train_clip_student(cfgs):
-    training_mode = _get_weakclip_cfg(cfgs)["student_training_mode"]
+    weak_cfg = _get_weakclip_cfg(cfgs)
+    output_paths = _teacher_unlabeled_score_paths(cfgs)
+    if os.path.exists(output_paths["selected_manifest"]):
+        pseudo_counts = _pseudo_manifest_counts(output_paths["selected_manifest"])
+        if pseudo_counts["abnormal_count"] == 0 and weak_cfg["allow_zero_abnormal_pseudo"]:
+            print("=> skip clip_student: no abnormal pseudo selected under normal-only baseline")
+            return None
+    training_mode = weak_cfg["student_training_mode"]
     if training_mode == "legacy_stable":
         return _train_clip_student_legacy_stable(cfgs)
     return _train_clip_student_balanced_ddad(cfgs)
@@ -6430,6 +6578,9 @@ def _load_clip_student_fusion_checkpoint(path, model, fusion_head, optimizer=Non
 
 
 def train_clip_student_fusion(cfgs):
+    clip_seed = _get_clip_seed(cfgs)
+    _set_global_seed(clip_seed)
+    print("=> CLIP seed fixed to {}".format(clip_seed))
     device = _get_device(cfgs)
     clip_cfg = _get_section(cfgs, "CLIP")
     loader_overrides = _get_clip_loader_overrides(cfgs)
@@ -6443,6 +6594,15 @@ def train_clip_student_fusion(cfgs):
     if not os.path.exists(output_paths["selected_manifest"]):
         raise FileNotFoundError(
             "Expected pseudo-label manifest at {}. Run select_pseudo first.".format(output_paths["selected_manifest"])
+        )
+    pseudo_manifest_counts = _pseudo_manifest_counts(output_paths["selected_manifest"])
+    normal_only_fusion = bool(
+        pseudo_manifest_counts["abnormal_count"] == 0 and
+        weak_cfg["allow_zero_abnormal_pseudo"]
+    )
+    if normal_only_fusion and not weak_cfg["normal_only_fusion_enabled"]:
+        raise RuntimeError(
+            "Pseudo manifest contains no abnormal samples and WeakCLIP.normal_only_fusion_enabled=false."
         )
 
     pseudo_loader = _build_pseudo_label_loader(
@@ -6504,6 +6664,8 @@ def train_clip_student_fusion(cfgs):
 
     model = _build_clip_model(cfgs, device)
     init_stage = weak_cfg["student_fusion_init_stage"]
+    if normal_only_fusion:
+        init_stage = "clip_teacher"
     if init_stage not in {"clip_student", "clip_teacher"}:
         raise ValueError(
             "WeakCLIP.student_fusion_init_stage must be 'clip_student' or 'clip_teacher', got '{}'".format(
@@ -6527,7 +6689,8 @@ def train_clip_student_fusion(cfgs):
             )
         )
     _load_checkpoint(init_checkpoint, model, map_location=device)
-    if weak_cfg["student_fusion_freeze_clip"]:
+    effective_freeze_clip = bool(weak_cfg["student_fusion_freeze_clip"] or normal_only_fusion)
+    if effective_freeze_clip:
         _freeze_module(model)
     else:
         _configure_clip_trainable_parameters(model)
@@ -6549,7 +6712,7 @@ def train_clip_student_fusion(cfgs):
     clip_aux_loss_weight = float(weak_cfg.get("student_clip_aux_loss_weight", 0.3))
     ddad_map_loss_weight = float(weak_cfg.get("student_ddad_map_loss_weight", 0.05))
     bg_weight = float(weak_cfg.get("student_bg_suppression_weight", 0.05))
-    effective_clip_aux_loss_weight = 0.0 if weak_cfg["student_fusion_freeze_clip"] else clip_aux_loss_weight
+    effective_clip_aux_loss_weight = 0.0 if effective_freeze_clip or normal_only_fusion else clip_aux_loss_weight
 
     checkpoint_paths = _clip_student_fusion_checkpoint_paths(cfgs)
     writer = SummaryWriter(os.path.join(cfgs["Exp"]["out_dir"], "log_clip_student_fusion"))
@@ -6561,13 +6724,19 @@ def train_clip_student_fusion(cfgs):
         "fusion_dim={} selection=fused_val_auc+ap-0.25*fused_clean_mean".format(
             init_stage,
             init_checkpoint,
-            weak_cfg["student_fusion_freeze_clip"],
+            effective_freeze_clip,
             effective_clip_aux_loss_weight,
             ddad_map_loss_weight,
             weak_cfg["student_validation_subset"],
             _student_fusion_input_dim(weak_cfg),
         )
     )
+    if normal_only_fusion:
+        print(
+            "=> clip_student_fusion normal-only mode: abnormal_pseudo=0 normal_pseudo={} init_stage=clip_teacher".format(
+                pseudo_manifest_counts["normal_count"]
+            )
+        )
 
     for epoch in range(1, num_epoch + 1):
         start = time.time()
@@ -6646,7 +6815,7 @@ def train_clip_student_fusion(cfgs):
             "std": float(np.std(fused_clean_scores)) if fused_clean_scores else 0.0,
             "count": int(len(fused_clean_scores)),
         }
-        score = _weakclip_checkpoint_score(fused_validation_metrics, fused_clean_stats)
+        score = _student_fusion_checkpoint_score(fused_validation_metrics, fused_clean_stats)
         writer.add_scalar("train_total", train_stats["total"], epoch)
         writer.add_scalar("train_fused_cls", train_stats["fused_cls"], epoch)
         writer.add_scalar("train_clip_aux", train_stats["clip_aux"], epoch)
@@ -6686,6 +6855,8 @@ def train_clip_student_fusion(cfgs):
         )
         checkpoint_extra = {
             "epoch": epoch,
+            "clip_seed": clip_seed,
+            "normal_only_fusion": bool(normal_only_fusion),
             "score": score,
             "train_total": train_stats["total"],
             "train_fused_cls": train_stats["fused_cls"],
@@ -6712,6 +6883,13 @@ def train_clip_student_fusion(cfgs):
             "student_effective_clip_aux_loss_weight": effective_clip_aux_loss_weight,
             "student_fusion_loss_weight": fusion_loss_weight,
             "student_fusion_input_dim": _student_fusion_input_dim(weak_cfg),
+            "pseudo_soft_target_enabled": weak_cfg["pseudo_soft_target_enabled"],
+            "pseudo_soft_target_range": {
+                "abnormal_min": weak_cfg["pseudo_soft_abnormal_min"],
+                "abnormal_max": weak_cfg["pseudo_soft_abnormal_max"],
+                "normal_min": weak_cfg["pseudo_soft_normal_min"],
+                "normal_max": weak_cfg["pseudo_soft_normal_max"],
+            },
         }
         _save_clip_student_fusion_checkpoint(
             checkpoint_paths["last"], model, fusion_head, optimizer=optimizer, extra=checkpoint_extra
@@ -6809,9 +6987,9 @@ def _score_student_fusion_rows(rows, fusion_head, device, weak_cfg=None):
     df = pd.DataFrame(rows)
     if len(df) == 0:
         return df, {"auc": 0.0, "ap": 0.0, "count": 0}
-    del weak_cfg
     df = _attach_rank_and_percentile(df, "refined_ddad_score", "refined_ddad")
     df = _attach_rank_and_percentile(df, "clip_score", "clip_score")
+    df = _attach_rank_and_percentile(df, "ddad_score", "ddad")
     df = _attach_rank_and_percentile(df, "localization_confidence", "localization_confidence")
     df = _attach_rank_and_percentile(df, "background_consistency", "background_consistency")
     df["abnormal_joint_score"] = (
@@ -6837,6 +7015,7 @@ def _score_student_fusion_rows(rows, fusion_head, device, weak_cfg=None):
         "localization_confidence",
         "background_consistency",
     ]
+    del weak_cfg
     features = torch.tensor(df[feature_columns].astype(float).to_numpy(), dtype=torch.float32)
     fusion_scores = []
     fusion_head.eval()

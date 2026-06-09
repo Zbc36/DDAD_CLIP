@@ -305,6 +305,60 @@ def split_grouped_records(records, val_ratio=0.1, val_seed=0, group_key=None):
     return train_records, val_records
 
 
+def _sample_unlabeled_records_by_contamination(
+    records,
+    total_count,
+    abnormal_ratio,
+    sample_seed=3407,
+    strict=True,
+):
+    total_count = int(total_count)
+    abnormal_ratio = float(abnormal_ratio)
+    if total_count <= 0:
+        raise ValueError("unlabeled_train_total must be > 0, got {}".format(total_count))
+    if not 0.0 <= abnormal_ratio <= 1.0:
+        raise ValueError("unlabeled_train_abnormal_ratio must be in [0, 1], got {}".format(abnormal_ratio))
+
+    normal_records = [record for record in records if int(record.get("_hidden_label", -1)) == 0]
+    abnormal_records = [record for record in records if int(record.get("_hidden_label", -1)) == 1]
+    target_abnormal = int(round(total_count * abnormal_ratio))
+    target_abnormal = min(target_abnormal, total_count)
+    target_normal = total_count - target_abnormal
+
+    if strict:
+        if len(normal_records) < target_normal:
+            raise RuntimeError(
+                "Not enough unlabeled normal records for contamination study: required={} available={}".format(
+                    target_normal, len(normal_records)
+                )
+            )
+        if len(abnormal_records) < target_abnormal:
+            raise RuntimeError(
+                "Not enough unlabeled abnormal records for contamination study: required={} available={}".format(
+                    target_abnormal, len(abnormal_records)
+                )
+            )
+
+    rng = np.random.RandomState(int(sample_seed))
+    sampled_normal = list(normal_records)
+    sampled_abnormal = list(abnormal_records)
+    rng.shuffle(sampled_normal)
+    rng.shuffle(sampled_abnormal)
+    sampled_normal = sampled_normal[:min(target_normal, len(sampled_normal))]
+    sampled_abnormal = sampled_abnormal[:min(target_abnormal, len(sampled_abnormal))]
+    sampled = sampled_normal + sampled_abnormal
+    rng.shuffle(sampled)
+    return sampled, {
+        "enabled": True,
+        "total": int(total_count),
+        "abnormal_ratio": float(abnormal_ratio),
+        "sample_seed": int(sample_seed),
+        "strict": bool(strict),
+        "normal_count": int(len(sampled_normal)),
+        "abnormal_count": int(len(sampled_abnormal)),
+    }
+
+
 class MultiBranchDataset(data.Dataset):
     """
     Unified dataset for the multi-branch anomaly detection pipeline.
@@ -339,6 +393,12 @@ class MultiBranchDataset(data.Dataset):
         clean_val_ratio=None,
         unlabeled_val_ratio=None,
         group_key=None,
+        contamination_study_enabled=False,
+        unlabeled_train_total=None,
+        unlabeled_train_abnormal_ratio=0.0,
+        unlabeled_train_sample_seed=3407,
+        unlabeled_train_sample_strict=True,
+        contamination_affects_val=False,
     ):
         super(MultiBranchDataset, self).__init__()
         self.root = main_path
@@ -354,6 +414,12 @@ class MultiBranchDataset(data.Dataset):
         self.group_key = None if group_key in {None, "", "auto"} else str(group_key)
         self.clean_val_ratio = float(val_ratio if clean_val_ratio is None else clean_val_ratio)
         self.unlabeled_val_ratio = float(val_ratio if unlabeled_val_ratio is None else unlabeled_val_ratio)
+        self.contamination_study_enabled = bool(contamination_study_enabled)
+        self.unlabeled_train_total = None if unlabeled_train_total in {None, ""} else int(unlabeled_train_total)
+        self.unlabeled_train_abnormal_ratio = float(unlabeled_train_abnormal_ratio)
+        self.unlabeled_train_sample_seed = int(unlabeled_train_sample_seed)
+        self.unlabeled_train_sample_strict = bool(unlabeled_train_sample_strict)
+        self.contamination_affects_val = bool(contamination_affects_val)
         self.synthetic_mode_probs = synthetic_mode_probs or {
             "copy_paste": 0.4,
             "intensity_shift": 0.2,
@@ -415,6 +481,34 @@ class MultiBranchDataset(data.Dataset):
             val_seed=val_seed + 97,
             group_key=self.group_key,
         )
+        if self.contamination_study_enabled:
+            if self.unlabeled_train_total is None:
+                raise ValueError("contamination_study_enabled=true requires unlabeled_train_total to be set.")
+            unlabeled_train_pool, contamination_summary = _sample_unlabeled_records_by_contamination(
+                unlabeled_train_pool,
+                total_count=self.unlabeled_train_total,
+                abnormal_ratio=self.unlabeled_train_abnormal_ratio,
+                sample_seed=self.unlabeled_train_sample_seed,
+                strict=self.unlabeled_train_sample_strict,
+            )
+            print(
+                "=> contamination study enabled total={} abnormal_ratio={:.3f} abnormal={} normal={} seed={} strict={}".format(
+                    contamination_summary["total"],
+                    contamination_summary["abnormal_ratio"],
+                    contamination_summary["abnormal_count"],
+                    contamination_summary["normal_count"],
+                    contamination_summary["sample_seed"],
+                    contamination_summary["strict"],
+                )
+            )
+            if self.contamination_affects_val:
+                unlabeled_val_pool, _ = _sample_unlabeled_records_by_contamination(
+                    unlabeled_val_pool,
+                    total_count=min(self.unlabeled_train_total, len(unlabeled_val_pool)),
+                    abnormal_ratio=self.unlabeled_train_abnormal_ratio,
+                    sample_seed=self.unlabeled_train_sample_seed + 1,
+                    strict=False,
+                )
         test_normal = [_coerce_record(record) for record in list(data_dict["test"]["0"])]
         test_abnormal = [_coerce_record(record) for record in list(data_dict["test"]["1"])]
         real_records = [(name, 0) for name in train_normal + unlabeled_normal]
@@ -862,6 +956,9 @@ class PseudoLabelDataset(data.Dataset):
                     "ddad_percentile": row_float(row, "ddad_percentile", 0.0),
                     "refined_ddad_score": row_float(row, "refined_ddad_score", 0.0),
                     "refined_ddad_percentile": row_float(row, "refined_ddad_percentile", 0.0),
+                    "clip_score_percentile": row_float(row, "clip_score_percentile", 0.0),
+                    "localization_confidence_percentile": row_float(row, "localization_confidence_percentile", 0.0),
+                    "background_consistency_percentile": row_float(row, "background_consistency_percentile", 0.0),
                     "abnormal_joint_score": row_float(row, "abnormal_joint_score", 0.0),
                     "normal_joint_score": row_float(row, "normal_joint_score", 0.0),
                     "localization_confidence": row_float(row, "localization_confidence", 0.0),
@@ -917,6 +1014,9 @@ class PseudoLabelDataset(data.Dataset):
             "ddad_percentile": torch.tensor(sample["ddad_percentile"], dtype=torch.float32),
             "refined_ddad_score": torch.tensor(sample["refined_ddad_score"], dtype=torch.float32),
             "refined_ddad_percentile": torch.tensor(sample["refined_ddad_percentile"], dtype=torch.float32),
+            "clip_score_percentile": torch.tensor(sample["clip_score_percentile"], dtype=torch.float32),
+            "localization_confidence_percentile": torch.tensor(sample["localization_confidence_percentile"], dtype=torch.float32),
+            "background_consistency_percentile": torch.tensor(sample["background_consistency_percentile"], dtype=torch.float32),
             "abnormal_joint_score": torch.tensor(sample["abnormal_joint_score"], dtype=torch.float32),
             "normal_joint_score": torch.tensor(sample["normal_joint_score"], dtype=torch.float32),
             "localization_confidence": torch.tensor(sample["localization_confidence"], dtype=torch.float32),

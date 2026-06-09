@@ -1,7 +1,7 @@
 Exp:
-  out_dir: "output/AEU/Vin_CLIP_Weak/"
-  gpu: 3
-  gpu_ids: [3]
+  out_dir: "output/AEU/BraTumor_CLIP_Weak/"
+  gpu: 2
+  gpu_ids: [2]
 
 Ensemble:
   target_count: 3
@@ -17,9 +17,11 @@ Model:
   entropy_loss_weight: 2.0e-4
 
 Data:
-  dataset: "vin"
+  dataset: "brain"
   img_size: 64
   clip_img_size: 336
+  extra_data: 1000
+  ar: 0.6
   val_ratio: 0.1
   val_seed: 0
   workers: 12
@@ -48,9 +50,8 @@ RefineSolver:
   bs: 64
   lr: 5.0e-4
   weight_decay: 0.0
-  num_epoch: 125
+  num_epoch: 250
   grad_clip: Null
-#  band_mode: "fixed_3band"
   band_mode: "none"
   score_topk_ratio: 0.01
 
@@ -80,14 +81,14 @@ CLIP:
   cache_clip_images: false
   lr: 5.0e-5
   weight_decay: 1.0e-4
-  num_epoch: 15
+  num_epoch: 30
   backbone_name: "ViT-L-14-336"
   pretrained: "openai"
   offline_pretrained: true
   feature_layers: [6, 12, 18, 24]
   seg_adapter_dim: 512
   det_adapter_dim: 512
-  prompt_ensemble: "vin_chest_xray"
+  prompt_ensemble: "brain_mri"
   prompt_token_count: 4
   use_dap_pooling: true
   dap_alpha: 0.5
@@ -124,21 +125,20 @@ WeakCLIP:
   pseudo_selection_mode: "balanced_topup"
   student_use_synthetic_cls: false
   student_experiment_name: "clip_student_balanced_ddad_v1"
-#  student_fusion_experiment_name: "clip_student_fusion_balanced_ddadmap_v1"
   student_fusion_experiment_name: "clip_student_fusion_11dim_same_run"
   student_checkpoint_metric: "labeled_val_auc_ap"
   student_checkpoint_auc_weight: 1.5
-  student_checkpoint_clean_penalty_threshold: 0.07
-  student_checkpoint_clean_penalty_weight: 0.25
+  student_checkpoint_clean_penalty_threshold: 0.04
+  student_checkpoint_clean_penalty_weight: 0.5
   student_validation_subset: "unlabeled_val_pool"
   pseudo_topup_normal_target: 0.05
   pseudo_topup_normal_weight_scale: 0.75
   pseudo_topup_normal_percentile_max: 0.20
   pseudo_soft_target_enabled: false
-#  pseudo_soft_abnormal_min: 0.90
-#  pseudo_soft_abnormal_max: 0.98
-#  pseudo_soft_normal_min: 0.02
-#  pseudo_soft_normal_max: 0.10
+  pseudo_soft_abnormal_min: 0.90
+  pseudo_soft_abnormal_max: 0.98
+  pseudo_soft_normal_min: 0.02
+  pseudo_soft_normal_max: 0.10
   student_pseudo_loss_weight: 0.2
   student_clean_loss_weight: 0.8
   student_pseudo_loc_weight: 0.05

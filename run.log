@@ -1,0 +1,240 @@
+nohup: ignoring input
+=> Training the weak DDAD branch A on clean normal + unlabeled pool ...
+=> DDADInputSAFD enabled=True mode=weighted_residual raw_weight=0.5000 safd_weight=0.5000 levels=3 patch_size=8
+=> Existing weak_a members: 0/3
+=> Training weak_a member 1/3 (seed=3407) on subset 'clean_plus_unlabeled_train_pool'
+weak_a member 00 Epoch[1/250]	Time:12.2s	Train:-1.4399	Rec:0.1820	Aux:-1.6220	CleanVal:-2.9235
+weak_a member 00 Epoch[25/250]	Time:2.8s	Train:-4.6184	Rec:0.9995	Aux:-5.6179	CleanVal:-4.8435
+weak_a member 00 Epoch[50/250]	Time:2.4s	Train:-4.8461	Rec:1.0038	Aux:-5.8499	CleanVal:-4.9075
+weak_a member 00 Epoch[75/250]	Time:2.4s	Train:-4.9303	Rec:1.0022	Aux:-5.9325	CleanVal:-4.8970
+weak_a member 00 Epoch[100/250]	Time:2.4s	Train:-5.0526	Rec:1.0014	Aux:-6.0540	CleanVal:-5.0604
+weak_a member 00 Epoch[125/250]	Time:2.5s	Train:-5.1372	Rec:0.9992	Aux:-6.1363	CleanVal:-5.1529
+weak_a member 00 Epoch[150/250]	Time:2.6s	Train:-5.1799	Rec:1.0036	Aux:-6.1835	CleanVal:-5.0227
+weak_a member 00 Epoch[175/250]	Time:2.6s	Train:-5.2250	Rec:0.9977	Aux:-6.2228	CleanVal:-5.1795
+weak_a member 00 Epoch[200/250]	Time:2.6s	Train:-5.2604	Rec:1.0011	Aux:-6.2615	CleanVal:-5.1669
+weak_a member 00 Epoch[225/250]	Time:2.6s	Train:-5.2927	Rec:1.0005	Aux:-6.2932	CleanVal:-5.1294
+weak_a member 00 Epoch[250/250]	Time:2.5s	Train:-5.3335	Rec:1.0011	Aux:-6.3346	CleanVal:-5.1887
+=> Training weak_a member 2/3 (seed=3408) on subset 'clean_plus_unlabeled_train_pool'
+weak_a member 01 Epoch[1/250]	Time:2.3s	Train:-1.1621	Rec:0.2346	Aux:-1.3967	CleanVal:-2.8421
+weak_a member 01 Epoch[25/250]	Time:3.0s	Train:-4.6402	Rec:0.9906	Aux:-5.6308	CleanVal:-4.8558
+weak_a member 01 Epoch[50/250]	Time:2.4s	Train:-4.8372	Rec:1.0047	Aux:-5.8419	CleanVal:-4.9339
+weak_a member 01 Epoch[75/250]	Time:2.6s	Train:-4.9967	Rec:1.0000	Aux:-5.9967	CleanVal:-5.0787
+weak_a member 01 Epoch[100/250]	Time:2.5s	Train:-5.1090	Rec:0.9987	Aux:-6.1077	CleanVal:-5.1468
+weak_a member 01 Epoch[125/250]	Time:2.4s	Train:-5.1602	Rec:1.0047	Aux:-6.1648	CleanVal:-5.0230
+weak_a member 01 Epoch[150/250]	Time:2.4s	Train:-5.2147	Rec:1.0028	Aux:-6.2175	CleanVal:-4.9510
+weak_a member 01 Epoch[175/250]	Time:2.5s	Train:-5.2602	Rec:0.9954	Aux:-6.2556	CleanVal:-5.1911
+weak_a member 01 Epoch[200/250]	Time:2.6s	Train:-5.3042	Rec:0.9994	Aux:-6.3036	CleanVal:-5.2045
+weak_a member 01 Epoch[225/250]	Time:2.6s	Train:-5.3506	Rec:1.0013	Aux:-6.3519	CleanVal:-5.2200
+weak_a member 01 Epoch[250/250]	Time:2.5s	Train:-5.3739	Rec:0.9983	Aux:-6.3722	CleanVal:-5.2237
+=> Training weak_a member 3/3 (seed=3409) on subset 'clean_plus_unlabeled_train_pool'
+weak_a member 02 Epoch[1/250]	Time:2.4s	Train:-1.5679	Rec:0.1795	Aux:-1.7474	CleanVal:-2.5985
+weak_a member 02 Epoch[25/250]	Time:2.6s	Train:-4.5913	Rec:0.9927	Aux:-5.5840	CleanVal:-4.3505
+weak_a member 02 Epoch[50/250]	Time:2.9s	Train:-4.8306	Rec:0.9931	Aux:-5.8237	CleanVal:-5.0049
+weak_a member 02 Epoch[75/250]	Time:2.9s	Train:-4.9205	Rec:0.9968	Aux:-5.9173	CleanVal:-5.0854
+weak_a member 02 Epoch[100/250]	Time:2.8s	Train:-5.0290	Rec:0.9961	Aux:-6.0252	CleanVal:-5.1396
+weak_a member 02 Epoch[125/250]	Time:2.7s	Train:-5.1067	Rec:1.0002	Aux:-6.1068	CleanVal:-5.1635
+weak_a member 02 Epoch[150/250]	Time:2.5s	Train:-5.1614	Rec:1.0042	Aux:-6.1656	CleanVal:-5.0579
+weak_a member 02 Epoch[175/250]	Time:2.4s	Train:-5.2187	Rec:0.9987	Aux:-6.2174	CleanVal:-5.1470
+weak_a member 02 Epoch[200/250]	Time:2.3s	Train:-5.2623	Rec:0.9967	Aux:-6.2590	CleanVal:-5.1613
+weak_a member 02 Epoch[225/250]	Time:2.4s	Train:-5.3059	Rec:0.9997	Aux:-6.3056	CleanVal:-5.1803
+weak_a member 02 Epoch[250/250]	Time:2.5s	Train:-5.3315	Rec:0.9994	Aux:-6.3310	CleanVal:-5.1712
+=> Waiting for both weak_a and weak_b to be complete before DDAD hidden-debug evaluation.
+=> Training the weak DDAD branch B on clean normal ...
+=> DDADInputSAFD enabled=True mode=weighted_residual raw_weight=0.5000 safd_weight=0.5000 levels=3 patch_size=8
+=> Existing weak_b members: 0/3
+=> Training weak_b member 1/3 (seed=3407) on subset 'clean_train_normal'
+weak_b member 00 Epoch[1/250]	Time:4.9s	Train:-0.2474	Rec:0.1395	Aux:-0.3869	CleanVal:-0.8527
+weak_b member 00 Epoch[25/250]	Time:1.6s	Train:-4.4193	Rec:0.9574	Aux:-5.3767	CleanVal:-4.2834
+weak_b member 00 Epoch[50/250]	Time:1.6s	Train:-4.5810	Rec:0.9915	Aux:-5.5726	CleanVal:-4.7450
+weak_b member 00 Epoch[75/250]	Time:2.0s	Train:-4.6389	Rec:0.9886	Aux:-5.6275	CleanVal:-4.8599
+weak_b member 00 Epoch[100/250]	Time:1.5s	Train:-4.7983	Rec:0.9822	Aux:-5.7804	CleanVal:-4.8541
+weak_b member 00 Epoch[125/250]	Time:1.7s	Train:-4.9013	Rec:0.9962	Aux:-5.8974	CleanVal:-4.8729
+weak_b member 00 Epoch[150/250]	Time:1.5s	Train:-4.9148	Rec:1.0092	Aux:-5.9240	CleanVal:-4.9081
+weak_b member 00 Epoch[175/250]	Time:1.7s	Train:-5.0161	Rec:0.9916	Aux:-6.0077	CleanVal:-4.9104
+weak_b member 00 Epoch[200/250]	Time:1.7s	Train:-5.0672	Rec:1.0025	Aux:-6.0697	CleanVal:-4.8657
+weak_b member 00 Epoch[225/250]	Time:1.6s	Train:-5.1492	Rec:0.9973	Aux:-6.1465	CleanVal:-4.8759
+weak_b member 00 Epoch[250/250]	Time:1.6s	Train:-5.1959	Rec:0.9963	Aux:-6.1922	CleanVal:-4.8867
+=> Training weak_b member 2/3 (seed=3408) on subset 'clean_train_normal'
+weak_b member 01 Epoch[1/250]	Time:1.5s	Train:0.0771	Rec:0.2286	Aux:-0.1515	CleanVal:-0.3076
+weak_b member 01 Epoch[25/250]	Time:1.8s	Train:-4.4226	Rec:0.9838	Aux:-5.4064	CleanVal:-4.5499
+weak_b member 01 Epoch[50/250]	Time:1.6s	Train:-4.6049	Rec:0.9832	Aux:-5.5881	CleanVal:-4.6619
+weak_b member 01 Epoch[75/250]	Time:1.6s	Train:-4.7519	Rec:0.9666	Aux:-5.7185	CleanVal:-4.7467
+weak_b member 01 Epoch[100/250]	Time:1.6s	Train:-4.7434	Rec:0.9841	Aux:-5.7275	CleanVal:-4.7578
+weak_b member 01 Epoch[125/250]	Time:1.6s	Train:-4.9024	Rec:0.9857	Aux:-5.8881	CleanVal:-4.8353
+weak_b member 01 Epoch[150/250]	Time:1.6s	Train:-4.9463	Rec:1.0057	Aux:-5.9519	CleanVal:-4.8787
+weak_b member 01 Epoch[175/250]	Time:1.6s	Train:-4.9691	Rec:0.9763	Aux:-5.9454	CleanVal:-4.9242
+weak_b member 01 Epoch[200/250]	Time:1.7s	Train:-5.0623	Rec:1.0132	Aux:-6.0755	CleanVal:-4.9331
+weak_b member 01 Epoch[225/250]	Time:1.6s	Train:-5.1400	Rec:0.9849	Aux:-6.1249	CleanVal:-4.8522
+weak_b member 01 Epoch[250/250]	Time:1.7s	Train:-5.1508	Rec:0.9832	Aux:-6.1340	CleanVal:-4.9296
+=> Training weak_b member 3/3 (seed=3409) on subset 'clean_train_normal'
+weak_b member 02 Epoch[1/250]	Time:1.4s	Train:-0.4115	Rec:0.1161	Aux:-0.5277	CleanVal:-0.9731
+weak_b member 02 Epoch[25/250]	Time:1.8s	Train:-4.4043	Rec:0.9695	Aux:-5.3738	CleanVal:-4.5838
+weak_b member 02 Epoch[50/250]	Time:1.6s	Train:-4.6430	Rec:0.9854	Aux:-5.6285	CleanVal:-4.6460
+weak_b member 02 Epoch[75/250]	Time:1.9s	Train:-4.7835	Rec:0.9531	Aux:-5.7366	CleanVal:-4.8485
+weak_b member 02 Epoch[100/250]	Time:2.0s	Train:-4.7835	Rec:1.0129	Aux:-5.7964	CleanVal:-4.8790
+weak_b member 02 Epoch[125/250]	Time:1.7s	Train:-4.8085	Rec:1.0107	Aux:-5.8193	CleanVal:-4.8323
+weak_b member 02 Epoch[150/250]	Time:1.6s	Train:-4.9174	Rec:0.9769	Aux:-5.8943	CleanVal:-4.9327
+weak_b member 02 Epoch[175/250]	Time:1.7s	Train:-4.9944	Rec:0.9914	Aux:-5.9858	CleanVal:-4.8572
+weak_b member 02 Epoch[200/250]	Time:1.6s	Train:-5.0445	Rec:0.9965	Aux:-6.0410	CleanVal:-4.9098
+weak_b member 02 Epoch[225/250]	Time:1.5s	Train:-5.0480	Rec:1.0014	Aux:-6.0494	CleanVal:-4.9133
+weak_b member 02 Epoch[250/250]	Time:1.6s	Train:-5.1523	Rec:0.9844	Aux:-6.1366	CleanVal:-4.8094
+=> Saved weak DDAD hidden-debug metrics to output/AEU/Vin_CLIP_Weak/weak_ddad_hidden_debug.json
+=> Training the weak DDAD refine branch ...
+=> Training weak_r refine: band_mode=none in_channels=2 effective_refine_channels=2 topk=1.00% DDADInputSAFD=True checkpoint=output/AEU/Vin_CLIP_Weak/refine/weak_refine_dual_none.pth
+weak_r Epoch[1/250]	Time:8.3s	Loss:0.0237	UnlabeledVal AUC:0.8447	UnlabeledVal AP:0.7670	Best AUC:0.8447	Best AP:0.7670
+weak_r Epoch[25/250]	Time:3.7s	Loss:0.0192	UnlabeledVal AUC:0.8573	UnlabeledVal AP:0.7817	Best AUC:0.8630	Best AP:0.7897
+weak_r Epoch[50/250]	Time:3.5s	Loss:0.0192	UnlabeledVal AUC:0.8600	UnlabeledVal AP:0.7850	Best AUC:0.8630	Best AP:0.7897
+weak_r Epoch[75/250]	Time:3.5s	Loss:0.0190	UnlabeledVal AUC:0.8548	UnlabeledVal AP:0.7828	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[100/250]	Time:3.6s	Loss:0.0187	UnlabeledVal AUC:0.8576	UnlabeledVal AP:0.7870	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[125/250]	Time:3.6s	Loss:0.0196	UnlabeledVal AUC:0.8571	UnlabeledVal AP:0.7852	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[150/250]	Time:3.7s	Loss:0.0191	UnlabeledVal AUC:0.8577	UnlabeledVal AP:0.7810	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[175/250]	Time:3.6s	Loss:0.0186	UnlabeledVal AUC:0.8577	UnlabeledVal AP:0.7841	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[200/250]	Time:3.6s	Loss:0.0189	UnlabeledVal AUC:0.8607	UnlabeledVal AP:0.7882	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[225/250]	Time:3.6s	Loss:0.0189	UnlabeledVal AUC:0.8579	UnlabeledVal AP:0.7865	Best AUC:0.8700	Best AP:0.7979
+weak_r Epoch[250/250]	Time:3.6s	Loss:0.0191	UnlabeledVal AUC:0.8588	UnlabeledVal AP:0.7884	Best AUC:0.8700	Best AP:0.7979
+=> Evaluating the weak DDAD refine branch ...
+=> eval_weak_r preprocess: band_mode=none in_channels=2 effective_refine_channels=2 score_topk_ratio=1.00% DDADInputSAFD=True
+weak_R_dual - AUC:0.833  AP:0.820
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+=> Training the weakly-supervised CLIP teacher ...
+clip_teacher Epoch[1/20]	Time:42.9s	Loss:0.3391	Cls:0.1904	Seg:1.4451	SAFDAux:0.0000	Syn AUC:0.8798	Syn AP:0.9209	ValHidden AUC:0.6052	ValHidden AP:0.5424	Clean Mean:0.0317	AMP:True
+clip_teacher Epoch[2/20]	Time:46.6s	Loss:0.2900	Cls:0.1436	Seg:1.4242	SAFDAux:0.0000	Syn AUC:0.9031	Syn AP:0.9362	ValHidden AUC:0.6457	ValHidden AP:0.5580	Clean Mean:0.0116	AMP:True
+clip_teacher Epoch[3/20]	Time:46.6s	Loss:0.2707	Cls:0.1287	Seg:1.3809	SAFDAux:0.0000	Syn AUC:0.9140	Syn AP:0.9400	ValHidden AUC:0.6686	ValHidden AP:0.6045	Clean Mean:0.0100	AMP:True
+clip_teacher Epoch[4/20]	Time:46.2s	Loss:0.2561	Cls:0.1199	Seg:1.3264	SAFDAux:0.0000	Syn AUC:0.9186	Syn AP:0.9448	ValHidden AUC:0.6173	ValHidden AP:0.5310	Clean Mean:0.0225	AMP:True
+clip_teacher Epoch[5/20]	Time:46.2s	Loss:0.2634	Cls:0.1275	Seg:1.3257	SAFDAux:0.0000	Syn AUC:0.9293	Syn AP:0.9504	ValHidden AUC:0.6738	ValHidden AP:0.5885	Clean Mean:0.0346	AMP:True
+clip_teacher Epoch[6/20]	Time:46.0s	Loss:0.2357	Cls:0.1062	Seg:1.2642	SAFDAux:0.0000	Syn AUC:0.9389	Syn AP:0.9577	ValHidden AUC:0.6623	ValHidden AP:0.5898	Clean Mean:0.0495	AMP:True
+clip_teacher Epoch[7/20]	Time:46.5s	Loss:0.2233	Cls:0.1008	Seg:1.1970	SAFDAux:0.0000	Syn AUC:0.9471	Syn AP:0.9620	ValHidden AUC:0.6789	ValHidden AP:0.5816	Clean Mean:0.0281	AMP:True
+clip_teacher Epoch[8/20]	Time:46.3s	Loss:0.2170	Cls:0.1000	Seg:1.1467	SAFDAux:0.0000	Syn AUC:0.9574	Syn AP:0.9688	ValHidden AUC:0.7124	ValHidden AP:0.6426	Clean Mean:0.0096	AMP:True
+clip_teacher Epoch[9/20]	Time:43.7s	Loss:0.1991	Cls:0.0863	Seg:1.1068	SAFDAux:0.0000	Syn AUC:0.9629	Syn AP:0.9740	ValHidden AUC:0.6065	ValHidden AP:0.5164	Clean Mean:0.0376	AMP:True
+clip_teacher Epoch[10/20]	Time:41.2s	Loss:0.1988	Cls:0.0917	Seg:1.0517	SAFDAux:0.0000	Syn AUC:0.9633	Syn AP:0.9744	ValHidden AUC:0.6134	ValHidden AP:0.5352	Clean Mean:0.0395	AMP:True
+clip_teacher Epoch[11/20]	Time:41.4s	Loss:0.1903	Cls:0.0850	Seg:1.0358	SAFDAux:0.0000	Syn AUC:0.9720	Syn AP:0.9795	ValHidden AUC:0.7215	ValHidden AP:0.5960	Clean Mean:0.0036	AMP:True
+clip_teacher Epoch[12/20]	Time:41.9s	Loss:0.1708	Cls:0.0703	Seg:0.9891	SAFDAux:0.0000	Syn AUC:0.9660	Syn AP:0.9755	ValHidden AUC:0.6452	ValHidden AP:0.5510	Clean Mean:0.0787	AMP:True
+clip_teacher Epoch[13/20]	Time:41.4s	Loss:0.1751	Cls:0.0753	Seg:0.9821	SAFDAux:0.0000	Syn AUC:0.9759	Syn AP:0.9821	ValHidden AUC:0.6946	ValHidden AP:0.6008	Clean Mean:0.0193	AMP:True
+clip_teacher Epoch[14/20]	Time:41.4s	Loss:0.1743	Cls:0.0753	Seg:0.9763	SAFDAux:0.0000	Syn AUC:0.9764	Syn AP:0.9838	ValHidden AUC:0.5704	ValHidden AP:0.5041	Clean Mean:0.0079	AMP:True
+clip_teacher Epoch[15/20]	Time:41.4s	Loss:0.1630	Cls:0.0669	Seg:0.9469	SAFDAux:0.0000	Syn AUC:0.9726	Syn AP:0.9817	ValHidden AUC:0.6362	ValHidden AP:0.5589	Clean Mean:0.0544	AMP:True
+clip_teacher Epoch[16/20]	Time:41.4s	Loss:0.1669	Cls:0.0690	Seg:0.9663	SAFDAux:0.0000	Syn AUC:0.9756	Syn AP:0.9829	ValHidden AUC:0.6680	ValHidden AP:0.5657	Clean Mean:0.0141	AMP:True
+clip_teacher Epoch[17/20]	Time:40.9s	Loss:0.1549	Cls:0.0585	Seg:0.9508	SAFDAux:0.0000	Syn AUC:0.9789	Syn AP:0.9859	ValHidden AUC:0.6327	ValHidden AP:0.5470	Clean Mean:0.0259	AMP:True
+clip_teacher Epoch[18/20]	Time:41.4s	Loss:0.1638	Cls:0.0673	Seg:0.9528	SAFDAux:0.0000	Syn AUC:0.9777	Syn AP:0.9843	ValHidden AUC:0.6972	ValHidden AP:0.5948	Clean Mean:0.0296	AMP:True
+clip_teacher Epoch[19/20]	Time:41.5s	Loss:0.1619	Cls:0.0681	Seg:0.9252	SAFDAux:0.0000	Syn AUC:0.9816	Syn AP:0.9863	ValHidden AUC:0.7034	ValHidden AP:0.5691	Clean Mean:0.0061	AMP:True
+clip_teacher Epoch[20/20]	Time:41.1s	Loss:0.1523	Cls:0.0565	Seg:0.9457	SAFDAux:0.0000	Syn AUC:0.9827	Syn AP:0.9868	ValHidden AUC:0.6894	ValHidden AP:0.5610	Clean Mean:0.0199	AMP:True
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+=> Scoring unlabeled pools with the CLIP teacher ...
+=> Saved unlabeled train scores to output/AEU/Vin_CLIP_Weak/pseudo/unlabeled_train_scores.csv
+=> Saved unlabeled val scores to output/AEU/Vin_CLIP_Weak/pseudo/unlabeled_val_scores.csv
+=> Selecting pseudo labels from the unlabeled train pool ...
+=> Saved pseudo-label manifest to output/AEU/Vin_CLIP_Weak/pseudo/pseudo_selected_train.csv
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+=> Fine-tuning the CLIP student with pseudo labels ...
+=> balanced clip_student: abnormal=324 normal=324 normal_ratio=1.000 minimum_normal=243 validation_subset=unlabeled_val_pool selection=1.50*labeled_val_auc+ap-0.25*max(0,clean_mean-0.07) trainable=det_adapters+prompt_tokens+logit_scale ddad_map_weight=0.0000
+clip_student Epoch[1/20]	Time:19.2s	Loss:0.1989	Clean:0.0721	PseudoBalanced:0.4070	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8511	Val AP:0.7955	Clean Mean:0.0694	Clean Penalty:0.0000	Select Score:2.0721	AMP:True
+clip_student Epoch[2/20]	Time:18.2s	Loss:0.1563	Clean:0.0391	PseudoBalanced:0.3418	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8627	Val AP:0.8170	Clean Mean:0.0748	Clean Penalty:0.0048	Select Score:2.1098	AMP:True
+clip_student Epoch[3/20]	Time:18.4s	Loss:0.1461	Clean:0.0331	PseudoBalanced:0.3239	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8807	Val AP:0.8375	Clean Mean:0.0264	Clean Penalty:0.0000	Select Score:2.1586	AMP:True
+clip_student Epoch[4/20]	Time:18.6s	Loss:0.1413	Clean:0.0286	PseudoBalanced:0.3175	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8888	Val AP:0.8460	Clean Mean:0.0338	Clean Penalty:0.0000	Select Score:2.1793	AMP:True
+clip_student Epoch[5/20]	Time:18.4s	Loss:0.1354	Clean:0.0247	PseudoBalanced:0.3075	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8837	Val AP:0.8389	Clean Mean:0.0297	Clean Penalty:0.0000	Select Score:2.1644	AMP:True
+clip_student Epoch[6/20]	Time:18.4s	Loss:0.1342	Clean:0.0233	PseudoBalanced:0.3064	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8925	Val AP:0.8526	Clean Mean:0.0278	Clean Penalty:0.0000	Select Score:2.1914	AMP:True
+clip_student Epoch[7/20]	Time:18.3s	Loss:0.1370	Clean:0.0273	PseudoBalanced:0.3085	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8903	Val AP:0.8528	Clean Mean:0.0490	Clean Penalty:0.0000	Select Score:2.1882	AMP:True
+clip_student Epoch[8/20]	Time:17.9s	Loss:0.1296	Clean:0.0204	PseudoBalanced:0.2986	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.7647	Val AP:0.7702	Clean Mean:0.0106	Clean Penalty:0.0000	Select Score:1.9173	AMP:True
+clip_student Epoch[9/20]	Time:18.0s	Loss:0.1270	Clean:0.0165	PseudoBalanced:0.2968	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8569	Val AP:0.7706	Clean Mean:0.1448	Clean Penalty:0.0748	Select Score:2.0372	AMP:True
+clip_student Epoch[10/20]	Time:17.9s	Loss:0.1341	Clean:0.0249	PseudoBalanced:0.3042	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8358	Val AP:0.8174	Clean Mean:0.0096	Clean Penalty:0.0000	Select Score:2.0711	AMP:True
+clip_student Epoch[11/20]	Time:17.8s	Loss:0.1161	Clean:0.0124	PseudoBalanced:0.2748	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.7133	Val AP:0.7402	Clean Mean:0.0111	Clean Penalty:0.0000	Select Score:1.8101	AMP:True
+clip_student Epoch[12/20]	Time:18.2s	Loss:0.1195	Clean:0.0136	PseudoBalanced:0.2818	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.6716	Val AP:0.7139	Clean Mean:0.0139	Clean Penalty:0.0000	Select Score:1.7212	AMP:True
+clip_student Epoch[13/20]	Time:18.1s	Loss:0.1114	Clean:0.0081	PseudoBalanced:0.2685	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.6742	Val AP:0.7265	Clean Mean:0.0095	Clean Penalty:0.0000	Select Score:1.7377	AMP:True
+clip_student Epoch[14/20]	Time:18.2s	Loss:0.1129	Clean:0.0083	PseudoBalanced:0.2719	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.5314	Val AP:0.6187	Clean Mean:0.0083	Clean Penalty:0.0000	Select Score:1.4159	AMP:True
+clip_student Epoch[15/20]	Time:18.7s	Loss:0.1142	Clean:0.0118	PseudoBalanced:0.2706	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.7753	Val AP:0.7892	Clean Mean:0.0190	Clean Penalty:0.0000	Select Score:1.9522	AMP:True
+clip_student Epoch[16/20]	Time:18.6s	Loss:0.1190	Clean:0.0136	PseudoBalanced:0.2806	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.7208	Val AP:0.7649	Clean Mean:0.0141	Clean Penalty:0.0000	Select Score:1.8461	AMP:True
+clip_student Epoch[17/20]	Time:18.4s	Loss:0.1172	Clean:0.0129	PseudoBalanced:0.2768	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.4240	Val AP:0.5264	Clean Mean:0.0085	Clean Penalty:0.0000	Select Score:1.1624	AMP:True
+clip_student Epoch[18/20]	Time:18.2s	Loss:0.1139	Clean:0.0107	PseudoBalanced:0.2715	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.5372	Val AP:0.6332	Clean Mean:0.0109	Clean Penalty:0.0000	Select Score:1.4390	AMP:True
+clip_student Epoch[19/20]	Time:18.1s	Loss:0.1213	Clean:0.0190	PseudoBalanced:0.2795	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.8482	Val AP:0.8472	Clean Mean:0.0245	Clean Penalty:0.0000	Select Score:2.1194	AMP:True
+clip_student Epoch[20/20]	Time:18.2s	Loss:0.1267	Clean:0.0214	PseudoBalanced:0.2899	DDADMap:0.0000	SAFDAux:0.0000	Val AUC:0.6991	Val AP:0.7469	Clean Mean:0.0095	Clean Penalty:0.0000	Select Score:1.7956	AMP:True
+=> Saved best balanced clip_student checkpoint to output/AEU/Vin_CLIP_Weak/clip_student_balanced_ddad_v1/clip_student_best.pth (best_epoch=6, val_auc_ap=2.1914)
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+=> Evaluating the weakly-supervised CLIP model on official_test ...
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+{
+  "official_test_metrics": {
+    "teacher": {
+      "clip": {
+        "auc": 0.691387,
+        "ap": 0.7079669664702724
+      }
+    },
+    "student": {
+      "clip": {
+        "auc": 0.840106,
+        "ap": 0.8541982780089272
+      }
+    }
+  },
+  "checkpoint": "output/AEU/Vin_CLIP_Weak/clip_student_balanced_ddad_v1/clip_student_best.pth",
+  "stage": "clip_student"
+}
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+=> Fine-tuning the DDAD-guided CLIP student fusion model ...
+=> clip_student_fusion init_stage=clip_student init_checkpoint=output/AEU/Vin_CLIP_Weak/clip_student_balanced_ddad_v1/clip_student_best.pth freeze_clip=True clip_aux_weight=0.0000 ddad_map_loss_weight=0.0000 validation_subset=unlabeled_val_pool fusion_dim=11 selection=fused_val_auc+ap-0.25*fused_clean_mean
+clip_student_fusion Epoch[1/20]	Time:22.2s	Loss:0.5385	Fused:0.5265	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2394	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9164	Fused AP:0.8778	Fused Clean Mean:0.4085	Select Score:1.6921
+clip_student_fusion Epoch[2/20]	Time:20.9s	Loss:0.4721	Fused:0.4605	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2317	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9184	Fused AP:0.8807	Fused Clean Mean:0.3359	Select Score:1.7151
+clip_student_fusion Epoch[3/20]	Time:20.8s	Loss:0.3823	Fused:0.3705	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2363	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9185	Fused AP:0.8811	Fused Clean Mean:0.2231	Select Score:1.7438
+clip_student_fusion Epoch[4/20]	Time:20.7s	Loss:0.2948	Fused:0.2828	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2410	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9182	Fused AP:0.8816	Fused Clean Mean:0.1243	Select Score:1.7687
+clip_student_fusion Epoch[5/20]	Time:21.0s	Loss:0.2486	Fused:0.2373	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2270	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9180	Fused AP:0.8818	Fused Clean Mean:0.0748	Select Score:1.7811
+clip_student_fusion Epoch[6/20]	Time:20.8s	Loss:0.2305	Fused:0.2187	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2348	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9180	Fused AP:0.8820	Fused Clean Mean:0.0530	Select Score:1.7868
+clip_student_fusion Epoch[7/20]	Time:20.9s	Loss:0.2253	Fused:0.2134	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2379	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9181	Fused AP:0.8829	Fused Clean Mean:0.0438	Select Score:1.7900
+clip_student_fusion Epoch[8/20]	Time:20.8s	Loss:0.2253	Fused:0.2136	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2348	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9182	Fused AP:0.8832	Fused Clean Mean:0.0390	Select Score:1.7916
+clip_student_fusion Epoch[9/20]	Time:20.8s	Loss:0.2251	Fused:0.2129	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2426	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9184	Fused AP:0.8837	Fused Clean Mean:0.0366	Select Score:1.7929
+clip_student_fusion Epoch[10/20]	Time:20.7s	Loss:0.2236	Fused:0.2118	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2348	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9184	Fused AP:0.8841	Fused Clean Mean:0.0359	Select Score:1.7936
+clip_student_fusion Epoch[11/20]	Time:20.8s	Loss:0.2226	Fused:0.2113	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2270	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9185	Fused AP:0.8841	Fused Clean Mean:0.0354	Select Score:1.7937
+clip_student_fusion Epoch[12/20]	Time:20.8s	Loss:0.2226	Fused:0.2109	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2348	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9186	Fused AP:0.8844	Fused Clean Mean:0.0356	Select Score:1.7941
+clip_student_fusion Epoch[13/20]	Time:20.8s	Loss:0.2223	Fused:0.2106	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2348	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9187	Fused AP:0.8848	Fused Clean Mean:0.0364	Select Score:1.7944
+clip_student_fusion Epoch[14/20]	Time:20.8s	Loss:0.2213	Fused:0.2097	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2317	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9187	Fused AP:0.8848	Fused Clean Mean:0.0365	Select Score:1.7944
+clip_student_fusion Epoch[15/20]	Time:20.7s	Loss:0.2213	Fused:0.2095	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2363	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9187	Fused AP:0.8850	Fused Clean Mean:0.0375	Select Score:1.7943
+clip_student_fusion Epoch[16/20]	Time:20.8s	Loss:0.2217	Fused:0.2098	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2379	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9187	Fused AP:0.8851	Fused Clean Mean:0.0372	Select Score:1.7945
+clip_student_fusion Epoch[17/20]	Time:20.7s	Loss:0.2208	Fused:0.2090	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2363	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9187	Fused AP:0.8854	Fused Clean Mean:0.0370	Select Score:1.7949
+clip_student_fusion Epoch[18/20]	Time:20.8s	Loss:0.2214	Fused:0.2094	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2395	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9187	Fused AP:0.8854	Fused Clean Mean:0.0393	Select Score:1.7943
+clip_student_fusion Epoch[19/20]	Time:20.9s	Loss:0.2214	Fused:0.2095	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2363	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9188	Fused AP:0.8856	Fused Clean Mean:0.0384	Select Score:1.7948
+clip_student_fusion Epoch[20/20]	Time:20.6s	Loss:0.2203	Fused:0.2089	ClipAux:0.2257	DDADMap:0.0000	Bg:0.2286	Syn AUC:0.9265	Syn AP:0.9504	Clean Mean:0.0278	AMP:True
+clip_student_fusion Val	Fused AUC:0.9188	Fused AP:0.8858	Fused Clean Mean:0.0388	Select Score:1.7949
+/home/baichuanzhang/.conda/envs/DDAD/lib/python3.10/site-packages/torch/nn/modules/activation.py:1160: UserWarning: Converting mask without torch.bool dtype to bool; this will negatively affect performance. Prefer to use a boolean mask directly. (Triggered internally at ../aten/src/ATen/native/transformers/attention.cpp:150.)
+  return torch._native_multi_head_attention(
+=> Evaluating the DDAD-guided CLIP student fusion model on official_test ...
+{
+  "official_test_metrics": {
+    "clip_student_raw": {
+      "auc": 0.840106,
+      "ap": 0.8541982780089272
+    },
+    "refined_ddad": {
+      "auc": 0.8325039999999999,
+      "ap": 0.8202344472302283
+    },
+    "ddad_guided_student_fusion": {
+      "auc": 0.8725459999999998,
+      "ap": 0.8692136907246019,
+      "count": 2000
+    }
+  }
+}
+==> Completed weakly-supervised CLIP student recovery evaluation.
